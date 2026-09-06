@@ -1,0 +1,105 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  externalId  Int?      @unique
+  slug        String    @unique
+  title       String
+  titleFa     String?
+  description String?
+  icon        String?   @default("Sparkles")
+  orderIndex  Int       @default(0)
+  products    Product[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Product {
+  id                  String    @id @default(cuid())
+  externalId          Int       @unique
+  name                String
+  nameFa              String?
+  customTitle         String
+  description         String?
+  costPriceUsd        Float
+  retailPriceUsd      Float
+  pricingUnit         String    @default("unit")
+  pricePer1000Usd     Float?
+  customMarginPercent Float?
+  stockCount          Int?
+  inStock             Boolean   @default(true)
+  isActive            Boolean   @default(false)
+  isFeatured          Boolean   @default(false)
+  isFlashDeal         Boolean   @default(false)
+  minQty              Int?      @default(1)
+  maxQty              Int?      @default(1)
+  requiresEmail       Boolean   @default(false)
+  requiresPassword    Boolean   @default(false)
+  requiresLink        Boolean   @default(false)
+  requiresComments    Boolean   @default(false)
+  requiredInputs      String?
+  categoryId          String?
+  category            Category? @relation(fields: [categoryId], references: [id])
+  rawDetails          String?
+  badge               String?
+  image               String?
+  rating              Float     @default(4.9)
+  reviewCount         Int       @default(15)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
+model SystemSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String?
+  updatedAt   DateTime @updatedAt
+}
+
+model Order {
+  id                String   @id @default(cuid())
+  orderNumber       String   @unique
+  externalOrderId   Int?
+  customerEmail     String
+  customerPhone     String?
+  customerLink      String?
+  totalPriceToman   Int
+  totalPriceUsd     Float
+  status            String   @default("processing")
+  deliveredAccounts String?
+  items             String
+  paymentGateway    String   @default("zarinpal")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model Coupon {
+  id               String   @id @default(cuid())
+  code             String   @unique
+  discountPercent  Int
+  maxDiscountToman Int?
+  minOrderToman    Int?
+  expiresAt        String?
+  usageCount       Int      @default(0)
+  maxUsage         Int?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  details   String
+  user      String   @default("System")
+  type      String
+  createdAt DateTime @default(now())
+}
