@@ -61,6 +61,7 @@ export class CatalogService {
       products.map(async (p) => {
         const price = await this.pricingService.calculatePrice(
           p.costPriceUsd,
+          p.retailPriceUsd,
           p.customMarginPercent,
           p.pricingUnit,
         );
@@ -91,6 +92,7 @@ export class CatalogService {
 
     const price = await this.pricingService.calculatePrice(
       product.costPriceUsd,
+      product.retailPriceUsd,
       product.customMarginPercent,
       product.pricingUnit,
     );

@@ -9,6 +9,7 @@ import { PricingModule } from './pricing/pricing.module';
 import { SettingsModule } from './settings/settings.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
+import { MediaModule } from './media/media.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { AuthModule } from './auth/auth.module';
     SettingsModule,
     UsersModule,
     AuthModule,
+    MediaModule,
   ],
 })
 export class AppModule {}

@@ -1,4 +1,4 @@
-﻿# compiled output
+# compiled output
 /dist
 /node_modules
 
@@ -27,3 +27,9 @@ prisma/dev.db-journal
 
 # TypeScript
 *.tsbuildinfo
+
+# Uploads
+uploads/*
+!uploads/.gitkeep
+uploads/products/*
+!uploads/products/.gitkeep
