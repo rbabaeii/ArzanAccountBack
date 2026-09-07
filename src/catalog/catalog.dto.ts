@@ -11,6 +11,10 @@ export class UpdateProductDto {
 
   @IsOptional()
   @IsString()
+  persianDescription?: string;
+
+  @IsOptional()
+  @IsString()
   badge?: string;
 
   @IsOptional()
@@ -86,6 +90,14 @@ export class UpdateProductDto {
   categoryId?: string;
 
   @IsOptional()
+  @IsNumber()
+  salePriceToman?: number;
+
+  @IsOptional()
+  @IsNumber()
+  discountPercent?: number;
+
+  @IsOptional()
   @IsString()
   user?: string;
 }
@@ -108,4 +120,30 @@ export class CreateCategoryDto {
   @IsOptional()
   @IsString()
   icon?: string;
+}
+
+export class UpdateCategoryDto {
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  titleFa?: string;
+
+  @IsOptional()
+  @IsString()
+  slug?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  icon?: string;
+
+  @IsOptional()
+  @IsNumber()
+  orderIndex?: number;
 }

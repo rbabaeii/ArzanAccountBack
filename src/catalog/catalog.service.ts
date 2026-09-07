@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PricingService } from '../pricing/pricing.service';
-import { CreateCategoryDto, UpdateProductDto } from './catalog.dto';
+import { CreateCategoryDto, UpdateCategoryDto, UpdateProductDto } from './catalog.dto';
 
 @Injectable()
 export class CatalogService {
@@ -167,6 +167,15 @@ export class CatalogService {
 
   async createCategory(dto: CreateCategoryDto) {
     return this.prisma.category.create({
+      data: dto,
+    });
+  }
+
+  async updateCategory(id: string, dto: UpdateCategoryDto) {
+    const category = await this.prisma.category.findUnique({ where: { id } });
+    if (!category) throw new NotFoundException('دسته‌بندی یافت نشد.');
+    return this.prisma.category.update({
+      where: { id },
       data: dto,
     });
   }

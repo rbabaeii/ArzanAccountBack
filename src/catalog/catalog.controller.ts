@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query } from '@nestjs/common';
 import { CatalogService } from './catalog.service';
 import { ApiResponse } from '../common/dto/api-response.dto';
-import { CreateCategoryDto, UpdateProductDto } from './catalog.dto';
+import { CreateCategoryDto, UpdateCategoryDto, UpdateProductDto } from './catalog.dto';
 
 @Controller('catalog')
 export class CatalogController {
@@ -67,6 +67,15 @@ export class CatalogController {
   async createCategory(@Body() dto: CreateCategoryDto) {
     const category = await this.catalogService.createCategory(dto);
     return ApiResponse.success(category, 'دسته‌بندی جدید با موفقیت ایجاد شد.');
+  }
+
+  @Put('categories/:id')
+  async updateCategory(
+    @Param('id') id: string,
+    @Body() dto: UpdateCategoryDto,
+  ) {
+    const updated = await this.catalogService.updateCategory(id, dto);
+    return ApiResponse.success(updated, 'دسته‌بندی با موفقیت ویرایش شد.');
   }
 
   @Delete('categories/:id')
