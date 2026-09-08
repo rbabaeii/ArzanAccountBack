@@ -41,15 +41,16 @@ export class EmailService {
 
       if (dbSetting && dbSetting.value) {
         const parsed = JSON.parse(dbSetting.value);
+        const rawFromName = parsed.fromName || this.configService.get('MAIL_FROM_NAME', 'ارزان اکانت');
         return {
           host: parsed.host || this.configService.get('SMTP_HOST', 'smtp.gmail.com'),
           port: Number(parsed.port) || Number(this.configService.get('SMTP_PORT', 465)),
           secure: parsed.secure !== undefined ? Boolean(parsed.secure) : (Number(parsed.port || 465) === 465),
           user: parsed.user || this.configService.get('SMTP_USER', 'rezadalyagpt@gmail.com'),
           pass: parsed.pass || this.configService.get('SMTP_PASS', 'xeuhxtofquloumhs'),
-          fromName: parsed.fromName || this.configService.get('MAIL_FROM_NAME', 'فروشگاه من'),
-          fromEmail: parsed.fromEmail || this.configService.get('MAIL_FROM_EMAIL', 'rezadalyagpt@gmail.com'),
-          replyTo: parsed.replyTo || this.configService.get('MAIL_REPLY_TO', 'rezadalyagpt@gmail.com'),
+          fromName: rawFromName.replace(/^["']|["']$/g, '').trim(),
+          fromEmail: (parsed.fromEmail || this.configService.get('MAIL_FROM_EMAIL', 'rezadalyagpt@gmail.com')).trim(),
+          replyTo: (parsed.replyTo || this.configService.get('MAIL_REPLY_TO', 'rezadalyagpt@gmail.com')).trim(),
           isEnabled: parsed.isEnabled !== undefined ? Boolean(parsed.isEnabled) : true,
         };
       }
@@ -59,15 +60,16 @@ export class EmailService {
 
     // Default env fallback
     const port = Number(this.configService.get('SMTP_PORT', 465));
+    const defaultFromName = this.configService.get('MAIL_FROM_NAME', 'ارزان اکانت');
     return {
       host: this.configService.get('SMTP_HOST', 'smtp.gmail.com'),
       port,
       secure: this.configService.get('SMTP_SECURE', 'true') === 'true' || port === 465,
       user: this.configService.get('SMTP_USER', 'rezadalyagpt@gmail.com'),
       pass: this.configService.get('SMTP_PASS', 'xeuhxtofquloumhs'),
-      fromName: this.configService.get('MAIL_FROM_NAME', 'فروشگاه من'),
-      fromEmail: this.configService.get('MAIL_FROM_EMAIL', 'rezadalyagpt@gmail.com'),
-      replyTo: this.configService.get('MAIL_REPLY_TO', 'rezadalyagpt@gmail.com'),
+      fromName: defaultFromName.replace(/^["']|["']$/g, '').trim(),
+      fromEmail: this.configService.get('MAIL_FROM_EMAIL', 'rezadalyagpt@gmail.com').trim(),
+      replyTo: this.configService.get('MAIL_REPLY_TO', 'rezadalyagpt@gmail.com').trim(),
       isEnabled: this.configService.get('MAIL_ENABLED', 'true') === 'true',
     };
   }
@@ -128,19 +130,26 @@ export class EmailService {
     }
 
     try {
-      const fromHeader = `"${config.fromName}" <${config.fromEmail}>`;
+      const cleanFromName = (config.fromName || 'ارزان اکانت').replace(/^["']|["']$/g, '').trim();
+      const cleanFromEmail = (config.fromEmail || config.user).trim();
+      const cleanReplyTo = (config.replyTo || cleanFromEmail).trim();
 
       const result = await transporter.sendMail({
-        from: fromHeader,
+        from: {
+          name: cleanFromName,
+          address: cleanFromEmail,
+        },
         to: options.to,
-        replyTo: config.replyTo,
+        replyTo: {
+          name: cleanFromName,
+          address: cleanReplyTo,
+        },
         subject: options.subject,
         html: options.html,
         text: options.text,
         headers: {
-          'X-Mailer': 'ArzanAccount-MailEngine/1.0',
-          'List-Unsubscribe': `<mailto:${config.replyTo}?subject=Unsubscribe>`,
-          'X-Priority': '1 (Highest)',
+          'X-Auto-Response-Suppress': 'OOF, AutoReply',
+          'Auto-Submitted': 'auto-generated',
         },
       });
 
@@ -235,29 +244,30 @@ export class EmailService {
     if (templateType === 'order_receipt') {
       return this.sendOrderReceipt({
         orderNumber: 'TEST-99201',
-        customerName: 'کاربر آزمایشی',
+        customerName: 'کاربر گرامی',
         customerEmail: to,
         createdAt: sentAt,
         items: [
           {
-            productTitle: 'اکانت تست تلگرام پرمیوم (۳ ماهه)',
+            productTitle: 'اکانت قانونی تلگرام پرمیوم (۳ ماهه)',
             quantity: 1,
             priceToman: 450000,
             durationDays: 90,
           },
         ],
         deliveredAccounts: [
-          'user: test_user@gmail.com | pass: SecurePass2026!',
-          'https://t.me/giftcode/test_code_arzan_account',
+          'کد فعال‌سازی لایسنس: ARZAN-TG-99201-PREMIUM',
+          'راهنمای فعال‌سازی: https://arzanaccount.com/help',
         ],
         totalPriceToman: 450000,
+        siteUrl: 'https://arzanaccount.com',
       });
     }
 
     if (templateType === 'order_invoice') {
       return this.sendOrderInvoice({
         orderNumber: 'TEST-99201',
-        customerName: 'کاربر آزمایشی',
+        customerName: 'کاربر گرامی',
         customerEmail: to,
         createdAt: sentAt,
         items: [
@@ -268,15 +278,17 @@ export class EmailService {
           },
         ],
         totalPriceToman: 980000,
+        siteUrl: 'https://arzanaccount.com',
       });
     }
 
     if (templateType === 'notification') {
       return this.sendNotification(to, {
-        title: 'پیام اطلاع‌رسانی تستی از سرور ارزان اکانت',
-        message: 'این پیام جهت اطمینان از عملکرد صحیح موتور ایمیل و قالب هماهنگ با هویت بصری ارزان اکانت ارسال گردیده است.',
-        buttonText: 'ورود به داشبورد مدیریت',
-        buttonUrl: 'http://localhost:3000/admin',
+        title: 'پیام اطلاع‌رسانی از سرور ارزان اکانت',
+        message: 'این پیام جهت اطمینان از عملکرد صحیح موتور ایمیل و رعایت استانداردهای ضد اسپم ارسال گردیده است.',
+        buttonText: 'مشاهده وب‌سایت',
+        buttonUrl: 'https://arzanaccount.com',
+        siteUrl: 'https://arzanaccount.com',
       });
     }
 

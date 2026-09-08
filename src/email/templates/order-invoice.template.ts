@@ -19,7 +19,7 @@ export interface OrderInvoiceEmailData {
 }
 
 export function renderOrderInvoiceEmail(data: OrderInvoiceEmailData): { html: string; text: string; subject: string } {
-  const siteUrl = data.siteUrl || 'http://localhost:3000';
+  const siteUrl = (data.siteUrl && !data.siteUrl.includes('localhost')) ? data.siteUrl : 'https://arzanaccount.com';
   const supportTelegram = data.supportTelegram || '@ArzanAccount_Support';
   const formattedToman = new Intl.NumberFormat('en-US').format(data.totalPriceToman);
   const greeting = data.customerName ? `سلام ${data.customerName} عزیز،` : 'سلام خریدار گرامی،';

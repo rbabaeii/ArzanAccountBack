@@ -25,7 +25,7 @@ export interface OrderReceiptEmailData {
 }
 
 export function renderOrderReceiptEmail(data: OrderReceiptEmailData): { html: string; text: string; subject: string } {
-  const siteUrl = data.siteUrl || 'http://localhost:3000';
+  const siteUrl = (data.siteUrl && !data.siteUrl.includes('localhost')) ? data.siteUrl : 'https://arzanaccount.com';
   const supportTelegram = data.supportTelegram || '@ArzanAccount_Support';
   const greeting = data.customerName ? `سلام ${data.customerName} عزیز،` : 'سلام خریدار محترم،';
   const formattedToman = new Intl.NumberFormat('en-US').format(data.totalPriceToman);

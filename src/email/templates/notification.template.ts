@@ -13,14 +13,18 @@ export interface NotificationEmailData {
 }
 
 export function renderNotificationEmail(data: NotificationEmailData): { html: string; text: string; subject: string } {
-  const siteUrl = data.siteUrl || 'http://localhost:3000';
+  const siteUrl = (data.siteUrl && !data.siteUrl.includes('localhost')) ? data.siteUrl : 'https://arzanaccount.com';
   const supportTelegram = data.supportTelegram || '@ArzanAccount_Support';
   const subject = `${data.title} - ارزان اکانت`;
 
-  const buttonHtml = data.buttonText && data.buttonUrl
+  const safeButtonUrl = data.buttonUrl
+    ? (data.buttonUrl.includes('localhost') ? siteUrl : data.buttonUrl)
+    : '';
+
+  const buttonHtml = data.buttonText && safeButtonUrl
     ? `
       <div style="margin-top: 24px; text-align: center;">
-        <a href="${data.buttonUrl}" target="_blank" style="display: inline-block; background-color: #005a71; color: #ffffff; text-decoration: none; padding: 13px 28px; border-radius: 10px; font-size: 14px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,90,113,0.2);">
+        <a href="${safeButtonUrl}" target="_blank" style="display: inline-block; background-color: #005a71; color: #ffffff; text-decoration: none; padding: 13px 28px; border-radius: 10px; font-size: 14px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,90,113,0.2);">
           ${data.buttonText} ←
         </a>
       </div>
