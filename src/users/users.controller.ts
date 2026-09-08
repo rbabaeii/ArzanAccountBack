@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { ApiResponse } from '../common/dto/api-response.dto';
-import { CreateUserDto, UpdateUserRoleDto, UpdateUserStatusDto } from './users.dto';
+import { CreateUserDto, UpdateUserRoleDto, UpdateUserStatusDto, UpdateProfileDto, TopUpWalletDto, ConvertPointsDto } from './users.dto';
 
 @Controller('users')
 export class UsersController {
@@ -106,6 +106,33 @@ export class UsersController {
       updated,
       `وضعیت کاربر به ${updated.status === 'ACTIVE' ? 'فعال' : 'مسدود'} تغییر یافت.`,
     );
+  }
+
+  @Put(':id/profile')
+  async updateProfile(
+    @Param('id') id: string,
+    @Body() dto: UpdateProfileDto,
+  ) {
+    const updated = await this.usersService.updateProfile(id, dto);
+    return ApiResponse.success(updated, 'اطلاعات پروفایل کاربری با موفقیت به‌روزرسانی شد.');
+  }
+
+  @Post(':id/topup-wallet')
+  async topUpWallet(
+    @Param('id') id: string,
+    @Body() dto: TopUpWalletDto,
+  ) {
+    const updated = await this.usersService.topUpWallet(id, dto.amountToman);
+    return ApiResponse.success(updated, 'کیف پول با موفقیت شارژ گردید.');
+  }
+
+  @Post(':id/convert-points')
+  async convertPoints(
+    @Param('id') id: string,
+    @Body() dto: ConvertPointsDto,
+  ) {
+    const result = await this.usersService.convertPoints(id, dto.points);
+    return ApiResponse.success(result, 'امتیاز کلاب با موفقیت به کد تخفیف تبدیل شد.');
   }
 
   @Delete(':id')

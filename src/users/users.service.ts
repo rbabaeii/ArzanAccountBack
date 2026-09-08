@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateUserDto, UpdateUserRoleDto, UpdateUserStatusDto } from './users.dto';
+import { CreateUserDto, UpdateUserRoleDto, UpdateUserStatusDto, UpdateProfileDto } from './users.dto';
 
 @Injectable()
 export class UsersService {
@@ -295,6 +295,103 @@ export class UsersService {
         approvedOrdersCount: approvedOrders.length,
         approvedOrdersTotalToman,
         lastActivityAt: lastActivity ? lastActivity.createdAt : admin.lastLoginAt,
+      },
+    };
+  }
+
+  async updateProfile(id: string, dto: UpdateProfileDto) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('کاربر یافت نشد.');
+
+    const dataToUpdate: any = {};
+    if (dto.name !== undefined) dataToUpdate.name = dto.name.trim();
+    if (dto.email !== undefined) dataToUpdate.email = dto.email?.trim() || null;
+    if (dto.phone !== undefined) dataToUpdate.phone = dto.phone?.trim() || null;
+    if (dto.nationalCode !== undefined) dataToUpdate.nationalCode = dto.nationalCode?.trim() || null;
+    if (dto.birthDate !== undefined) dataToUpdate.birthDate = dto.birthDate?.trim() || null;
+    if (dto.jobTitle !== undefined) dataToUpdate.jobTitle = dto.jobTitle?.trim() || null;
+    if (dto.avatar !== undefined) dataToUpdate.avatar = dto.avatar?.trim() || null;
+    if (dto.bankCardsJson !== undefined) dataToUpdate.bankCardsJson = dto.bankCardsJson;
+    if (dto.addressesJson !== undefined) dataToUpdate.addressesJson = dto.addressesJson;
+    if (dto.isTwoFactorEnabled !== undefined) dataToUpdate.isTwoFactorEnabled = Boolean(dto.isTwoFactorEnabled);
+
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data: dataToUpdate,
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        action: 'ویرایش مشخصات نمایه کاربر',
+        details: `مشخصات کاربری ${updated.name} به‌روزرسانی شد.`,
+        user: updated.name,
+        type: 'profile_update',
+      },
+    });
+
+    return updated;
+  }
+
+  async topUpWallet(id: string, amountToman: number) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('کاربر یافت نشد.');
+
+    const currentBalance = user.walletBalanceToman || 0;
+    const newBalance = currentBalance + Math.max(0, amountToman);
+
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data: { walletBalanceToman: newBalance },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        action: 'شارژ کیف پول کاربر',
+        details: `مبلغ ${amountToman} تومان به موجودی کیف پول کاربر ${user.name} افزوده شد. موجودی جدید: ${newBalance} تومان.`,
+        user: user.name,
+        type: 'finance',
+      },
+    });
+
+    return updated;
+  }
+
+  async convertPoints(id: string, points: number) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('کاربر یافت نشد.');
+
+    const currentPoints = user.clubPoints || 0;
+    if (currentPoints < points) {
+      throw new Error('امتیاز کلاب شما برای این تبدیل کافی نیست.');
+    }
+
+    const remainingPoints = currentPoints - points;
+    const discountPercent = Math.min(30, Math.max(5, Math.floor(points / 10)));
+    const couponCode = `CLUB-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+    await this.prisma.coupon.create({
+      data: {
+        code: couponCode,
+        discountPercent,
+        maxDiscountToman: 200000,
+        minOrderToman: 100000,
+        maxUsage: 1,
+        isActive: true,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      },
+    });
+
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data: { clubPoints: remainingPoints },
+    });
+
+    return {
+      user: updated,
+      coupon: {
+        code: couponCode,
+        discountPercent,
+        pointsUsed: points,
       },
     };
   }
