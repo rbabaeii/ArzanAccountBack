@@ -154,4 +154,148 @@ export class UsersService {
 
     return { success: true, message: 'کاربر با موفقیت حذف شد.' };
   }
+
+  async getAdminActivities(params?: {
+    adminId?: string;
+    adminUser?: string;
+    type?: string;
+    startDate?: string;
+    endDate?: string;
+    search?: string;
+    sort?: 'asc' | 'desc';
+    limit?: number;
+    offset?: number;
+  }) {
+    const where: any = {};
+
+    if (params?.adminId && params.adminId !== 'all') {
+      const admin = await this.prisma.user.findUnique({ where: { id: params.adminId } });
+      if (admin) {
+        where.OR = [
+          { adminId: admin.id },
+          { user: { contains: admin.name } },
+          { user: { contains: admin.phone || '____' } },
+        ];
+      } else {
+        where.adminId = params.adminId;
+      }
+    }
+
+    if (params?.type && params.type !== 'all') {
+      where.type = params.type;
+    }
+
+    if (params?.search) {
+      const s = params.search.trim();
+      where.AND = where.AND || [];
+      where.AND.push({
+        OR: [
+          { action: { contains: s } },
+          { details: { contains: s } },
+          { user: { contains: s } },
+        ],
+      });
+    }
+
+    if (params?.startDate || params?.endDate) {
+      where.createdAt = {};
+      if (params.startDate) {
+        where.createdAt.gte = new Date(params.startDate);
+      }
+      if (params.endDate) {
+        const end = new Date(params.endDate);
+        end.setHours(23, 59, 59, 999);
+        where.createdAt.lte = end;
+      }
+    }
+
+    const sortOrder = params?.sort === 'asc' ? 'asc' : 'desc';
+
+    const [activities, total] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where,
+        orderBy: { createdAt: sortOrder },
+        take: params?.limit ? Number(params.limit) : 50,
+        skip: params?.offset ? Number(params.offset) : 0,
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+
+    return {
+      activities,
+      total,
+    };
+  }
+
+  async getAdminActivitySummary(adminId: string) {
+    const admin = await this.prisma.user.findUnique({ where: { id: adminId } });
+    if (!admin) throw new NotFoundException('مدیر یافت نشد.');
+
+    const adminWhere: any = {
+      OR: [
+        { adminId: admin.id },
+        { user: { contains: admin.name } },
+        { user: { contains: admin.phone || '____' } },
+      ],
+    };
+
+    const [totalActivities, orderApprovals, catalogActions, lastActivity] = await Promise.all([
+      this.prisma.auditLog.count({ where: adminWhere }),
+      this.prisma.auditLog.count({
+        where: {
+          ...adminWhere,
+          type: { in: ['order', 'order_approval', 'order_delivery'] },
+        },
+      }),
+      this.prisma.auditLog.count({
+        where: {
+          ...adminWhere,
+          type: { in: ['product_update', 'product_toggle', 'category_update'] },
+        },
+      }),
+      this.prisma.auditLog.findFirst({
+        where: adminWhere,
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const approvedOrders = await this.prisma.order.findMany({
+      where: {
+        OR: [
+          { approvedByAdminId: admin.id },
+          { approvedByAdminName: { contains: admin.name } },
+        ],
+      },
+      select: {
+        id: true,
+        orderNumber: true,
+        totalPriceToman: true,
+        totalPriceUsd: true,
+        approvedAt: true,
+      },
+    });
+
+    const approvedOrdersTotalToman = approvedOrders.reduce((sum, o) => sum + o.totalPriceToman, 0);
+
+    return {
+      admin: {
+        id: admin.id,
+        name: admin.name,
+        role: admin.role,
+        phone: admin.phone,
+        email: admin.email,
+        status: admin.status,
+        lastLoginAt: admin.lastLoginAt,
+        createdAt: admin.createdAt,
+      },
+      stats: {
+        totalActivities,
+        orderApprovals: Math.max(orderApprovals, approvedOrders.length),
+        catalogActions,
+        approvedOrdersCount: approvedOrders.length,
+        approvedOrdersTotalToman,
+        lastActivityAt: lastActivity ? lastActivity.createdAt : admin.lastLoginAt,
+      },
+    };
+  }
 }

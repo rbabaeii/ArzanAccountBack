@@ -40,6 +40,36 @@ export class UsersController {
     return ApiResponse.success(stats);
   }
 
+  @Get('admin-activities')
+  async getAdminActivities(
+    @Query('adminId') adminId?: string,
+    @Query('type') type?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('search') search?: string,
+    @Query('sort') sort?: 'asc' | 'desc',
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    const data = await this.usersService.getAdminActivities({
+      adminId,
+      type,
+      startDate,
+      endDate,
+      search,
+      sort,
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+    });
+    return ApiResponse.success(data);
+  }
+
+  @Get(':id/activity-summary')
+  async getAdminActivitySummary(@Param('id') id: string) {
+    const summary = await this.usersService.getAdminActivitySummary(id);
+    return ApiResponse.success(summary);
+  }
+
   @Get(':id')
   async getUserById(@Param('id') id: string) {
     const user = await this.usersService.getUserById(id);

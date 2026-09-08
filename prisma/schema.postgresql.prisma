@@ -65,20 +65,24 @@ model SystemSetting {
 }
 
 model Order {
-  id                String   @id @default(cuid())
-  orderNumber       String   @unique
-  externalOrderId   Int?
-  customerEmail     String
-  customerPhone     String?
-  customerLink      String?
-  totalPriceToman   Int
-  totalPriceUsd     Float
-  status            String   @default("processing")
-  deliveredAccounts String?
-  items             String
-  paymentGateway    String   @default("zarinpal")
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                   String    @id @default(cuid())
+  orderNumber          String    @unique
+  externalOrderId      Int?
+  customerEmail        String
+  customerPhone        String?
+  customerLink         String?
+  totalPriceToman      Int
+  totalPriceUsd        Float
+  status               String    @default("processing")
+  deliveredAccounts    String?
+  items                String
+  paymentGateway       String    @default("zarinpal")
+  approvedByAdminId    String?
+  approvedByAdminName  String?
+  approvedByAdminPhone String?
+  approvedAt           DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 }
 
 model Coupon {
@@ -96,10 +100,13 @@ model Coupon {
 }
 
 model AuditLog {
-  id        String   @id @default(cuid())
-  action    String
-  details   String
-  user      String   @default("System")
-  type      String
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  action     String
+  details    String
+  user       String   @default("System")
+  adminId    String?
+  adminName  String?
+  adminPhone String?
+  type       String
+  createdAt  DateTime @default(now())
 }
