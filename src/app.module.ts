@@ -10,6 +10,7 @@ import { SettingsModule } from './settings/settings.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { MediaModule } from './media/media.module';
+import { EmailModule } from './email/email.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { MediaModule } from './media/media.module';
     UsersModule,
     AuthModule,
     MediaModule,
+    EmailModule,
   ],
 })
 export class AppModule {}

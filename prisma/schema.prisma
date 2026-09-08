@@ -130,3 +130,14 @@ model User {
   updatedAt          DateTime  @updatedAt
 }
 
+model EmailLog {
+  id           String   @id @default(cuid())
+  to           String
+  subject      String
+  template     String
+  status       String   @default("SENT")
+  errorMessage String?
+  metadata     String?
+  createdAt    DateTime @default(now())
+}
+
