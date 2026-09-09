@@ -195,8 +195,20 @@ export class CatalogService {
       liveProductRecord.pricingUnit,
     );
 
+    let tags: string[] = [];
+    if (liveProductRecord.tags) {
+      try {
+        tags = liveProductRecord.tags.startsWith('[')
+          ? JSON.parse(liveProductRecord.tags)
+          : liveProductRecord.tags.split(',').map((t: string) => t.trim()).filter(Boolean);
+      } catch {
+        tags = liveProductRecord.tags.split(',').map((t: string) => t.trim()).filter(Boolean);
+      }
+    }
+
     return {
       ...liveProductRecord,
+      tags,
       calculatedPrice: price,
       isLiveSynced,
     };
