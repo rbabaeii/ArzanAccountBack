@@ -54,6 +54,10 @@ export class CreateOrderDto {
 
   @IsOptional()
   activationItemsCount?: number;
+
+  @IsString()
+  @IsOptional()
+  orderNumber?: string;
 }
 
 export class UpdateOrderStatusDto {

@@ -229,6 +229,10 @@ export class CatalogService {
       throw new NotFoundException(`محصول با شناسه ${id} یافت نشد.`);
     }
 
+    if (!product.isActive) {
+      throw new BadRequestException(`محصول «${product.customTitle}» در حال حاضر غیرفعال و غیرقابل سفارش است.`);
+    }
+
     try {
       const raw = await this.irMarketService.getProduct(product.externalId);
       const item = (raw as any)?.product || raw;

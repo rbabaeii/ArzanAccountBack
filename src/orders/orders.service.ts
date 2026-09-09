@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
+import { CatalogService } from '../catalog/catalog.service';
 import { CreateOrderDto, UpdateOrderStatusDto, ProcessRefundDto, RequestRefundDto } from './orders.dto';
 
 @Injectable()
@@ -10,6 +11,7 @@ export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly catalogService: CatalogService,
   ) {}
 
   async getOrders(params?: { status?: string; customerEmail?: string; limit?: number; offset?: number }) {
@@ -56,7 +58,21 @@ export class OrdersService {
   }
 
   async createOrder(dto: CreateOrderDto) {
-    const orderNumber = `ORD-${Math.floor(100000 + Math.random() * 900000)}`;
+    if (!dto.items || !Array.isArray(dto.items) || dto.items.length === 0) {
+      throw new BadRequestException('سبد خرید خالی است یا آیتمی ارسال نشده است.');
+    }
+
+    // 1. Strict Stock and Active Status Validation Guard
+    for (const item of dto.items) {
+      const productId = item.productId || item.id;
+      if (!productId) {
+        throw new BadRequestException('شناسه محصول در آیتم‌های سفارش نامعتبر است.');
+      }
+      // Validates product existence, isActive status, live IRMarket stock, and local database stock
+      await this.catalogService.validateLiveStock(String(productId), Number(item.quantity) || 1);
+    }
+
+    const orderNumber = dto.orderNumber || `ORD-${Math.floor(100000 + Math.random() * 900000)}`;
 
     const isHybrid = Boolean(dto.isHybridOrder);
     let deliveryType = dto.deliveryType || 'link';
@@ -89,57 +105,86 @@ export class OrdersService {
       },
     });
 
-    // Trigger initial transactional email
-    try {
-      if (isHybrid) {
-        // Mode Hybrid: Deliver instant items immediately & inform customer about remaining activation queue
-        await this.emailService.sendOrderReceipt({
-          orderNumber,
-          customerEmail: dto.customerEmail,
-          customerPhone: dto.customerPhone,
-          createdAt: new Intl.DateTimeFormat('fa-IR', { dateStyle: 'full', timeStyle: 'short' }).format(new Date()),
-          items: dto.items || [],
-          deliveredAccounts: dto.deliveredAccounts || [],
-          accountCredentials: dto.accountCredentials || [],
-          isHybridOrder: true,
-          instantItemsCount: dto.instantItemsCount || 0,
-          activationItemsCount: dto.activationItemsCount || 0,
-          totalPriceToman: dto.totalPriceToman,
-          totalPriceUsd: dto.totalPriceUsd,
-          paymentGateway: dto.paymentGateway || 'zarinpal',
+    // Decrement local inventory stock where applicable
+    for (const item of dto.items) {
+      const productId = item.productId || item.id;
+      const requestedQty = Number(item.quantity) || 1;
+      try {
+        const prod = await this.prisma.product.findFirst({
+          where: {
+            OR: [{ id: String(productId) }, { externalId: isNaN(Number(productId)) ? -1 : Number(productId) }],
+          },
         });
-      } else if (deliveryType === 'account_activation') {
-        // Mode 3: Pending admin activation
-        await this.emailService.sendDeliveryEmail({
-          orderNumber,
-          customerEmail: dto.customerEmail,
-          productTitle: firstProductTitle,
-          deliveryType: 'pending_activation',
-          targetAccountEmail: dto.targetAccountEmail || dto.accountCredentials?.[0]?.email,
-        });
-      } else if (deliveryType === 'link') {
-        // Mode 1: Activation link
-        const link = dto.deliveredAccounts?.[0] || dto.customerLink || 'https://arzanaccount.com';
-        await this.emailService.sendDeliveryEmail({
-          orderNumber,
-          customerEmail: dto.customerEmail,
-          productTitle: firstProductTitle,
-          deliveryType: 'link',
-          activationLink: link,
-        });
-      } else {
-        // Mode 2: Account credentials
-        await this.emailService.sendDeliveryEmail({
-          orderNumber,
-          customerEmail: dto.customerEmail,
-          productTitle: firstProductTitle,
-          deliveryType: 'credentials',
-          accountCredentials: dto.deliveredAccounts || [],
-        });
+        if (prod && prod.stockCount !== null) {
+          const newStock = Math.max(0, prod.stockCount - requestedQty);
+          await this.prisma.product.update({
+            where: { id: prod.id },
+            data: {
+              stockCount: newStock,
+              inStock: newStock > 0,
+            },
+          });
+        }
+      } catch (stockErr) {
+        this.logger.warn(`Failed to decrement local stock for product ${productId}: ${stockErr?.message}`);
       }
-    } catch (emailErr) {
-      this.logger.warn(`Failed to send order delivery email for ${orderNumber}: ${emailErr?.message}`);
     }
+
+    // Trigger non-blocking transactional email in background (never block HTTP response)
+    (async () => {
+      try {
+        if (isHybrid) {
+          // Mode Hybrid: Deliver instant items immediately & inform customer about remaining activation queue
+          await this.emailService.sendOrderReceipt({
+            orderNumber,
+            customerEmail: dto.customerEmail,
+            customerPhone: dto.customerPhone,
+            createdAt: new Intl.DateTimeFormat('fa-IR', { dateStyle: 'full', timeStyle: 'short' }).format(new Date()),
+            items: dto.items || [],
+            deliveredAccounts: dto.deliveredAccounts || [],
+            accountCredentials: dto.accountCredentials || [],
+            isHybridOrder: true,
+            instantItemsCount: dto.instantItemsCount || 0,
+            activationItemsCount: dto.activationItemsCount || 0,
+            totalPriceToman: dto.totalPriceToman,
+            totalPriceUsd: dto.totalPriceUsd,
+            paymentGateway: dto.paymentGateway || 'zarinpal',
+          });
+        } else if (deliveryType === 'account_activation') {
+          // Mode 3: Pending admin activation
+          await this.emailService.sendDeliveryEmail({
+            orderNumber,
+            customerEmail: dto.customerEmail,
+            productTitle: firstProductTitle,
+            deliveryType: 'pending_activation',
+            targetAccountEmail: dto.targetAccountEmail || dto.accountCredentials?.[0]?.email,
+          });
+        } else if (deliveryType === 'link') {
+          // Mode 1: Activation link
+          const link = dto.deliveredAccounts?.[0] || dto.customerLink || 'https://arzanaccount.com';
+          await this.emailService.sendDeliveryEmail({
+            orderNumber,
+            customerEmail: dto.customerEmail,
+            productTitle: firstProductTitle,
+            deliveryType: 'link',
+            activationLink: link,
+          });
+        } else {
+          // Mode 2: Account credentials
+          await this.emailService.sendDeliveryEmail({
+            orderNumber,
+            customerEmail: dto.customerEmail,
+            productTitle: firstProductTitle,
+            deliveryType: 'credentials',
+            accountCredentials: dto.deliveredAccounts || [],
+          });
+        }
+      } catch (emailErr) {
+        this.logger.warn(`Failed to send order delivery email for ${orderNumber}: ${emailErr?.message}`);
+      }
+    })().catch((err) => {
+      this.logger.error(`Background email error for order ${orderNumber}: ${err?.message}`);
+    });
 
     return {
       ...order,
