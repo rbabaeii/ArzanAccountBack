@@ -8,7 +8,13 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
-import { SendOtpDto, VerifyOtpDto } from './auth.dto';
+import {
+  SendOtpDto,
+  VerifyOtpDto,
+  SendEmailOtpDto,
+  LoginPasswordDto,
+  UpdatePasswordDto,
+} from './auth.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -22,9 +28,42 @@ export class AuthController {
     return this.authService.sendOtp(dto.phone);
   }
 
+  @Post('send-email-otp')
+  async sendEmailOtp(@Body() dto: SendEmailOtpDto) {
+    return this.authService.sendEmailOtp(dto.phone);
+  }
+
+  @Post('send-email-otp-direct')
+  async sendDirectEmailOtp(@Body('email') email: string) {
+    return this.authService.sendDirectEmailOtp(email);
+  }
+
+  @Post('verify-email-otp')
+  async verifyEmailOtp(@Body() body: { email: string; code: string }) {
+    return this.authService.verifyEmailOtp(body.email, body.code);
+  }
+
   @Post('verify-otp')
   async verifyOtp(@Body() dto: VerifyOtpDto) {
     return this.authService.verifyOtp(dto.phone, dto.code);
+  }
+
+  @Post('login-password')
+  async loginPassword(@Body() dto: LoginPasswordDto) {
+    return this.authService.loginWithPassword(dto.phone, dto.password);
+  }
+
+  @Post('update-password')
+  async updatePassword(
+    @Body() dto: UpdatePasswordDto,
+    @Headers('authorization') authHeader?: string,
+  ) {
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new UnauthorizedException('توکن احراز هویت الزامی است.');
+    }
+    const token = authHeader.replace('Bearer ', '').trim();
+    const payload = this.jwtService.verify(token);
+    return this.authService.updatePassword(payload.sub, dto.newPassword, dto.currentPassword);
   }
 
   @Get('me')

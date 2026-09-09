@@ -18,6 +18,8 @@ export class SettingsController {
     @Body('rate') rate?: number,
     @Body('defaultMarginPercent') defaultMarginPercent?: number,
     @Body('margin') margin?: number,
+    @Body('maxPurchaseRatioDenominator') maxPurchaseRatioDenominator?: number,
+    @Body('purchaseRatioExemptionThreshold') purchaseRatioExemptionThreshold?: number,
     @Body('user') user?: string,
   ) {
     const finalRate = usdToRialRate || rate;
@@ -33,8 +35,22 @@ export class SettingsController {
         user,
       );
     }
+    if (maxPurchaseRatioDenominator !== undefined) {
+      await this.settingsService.updateSetting(
+        'MAX_PURCHASE_RATIO_DENOMINATOR',
+        maxPurchaseRatioDenominator.toString(),
+        user,
+      );
+    }
+    if (purchaseRatioExemptionThreshold !== undefined) {
+      await this.settingsService.updateSetting(
+        'PURCHASE_RATIO_EXEMPTION_THRESHOLD',
+        purchaseRatioExemptionThreshold.toString(),
+        user,
+      );
+    }
     const updated = await this.settingsService.getAllSettings();
-    return ApiResponse.success(updated, 'نرخ ارز و حاشیه سود با موفقیت ذخیره شد.');
+    return ApiResponse.success(updated, 'تنظیمات با موفقیت ذخیره شد.');
   }
 
   @Get('logs')

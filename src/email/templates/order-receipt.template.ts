@@ -17,6 +17,16 @@ export interface OrderReceiptEmailData {
     durationDays?: number;
   }>;
   deliveredAccounts?: string[];
+  accountCredentials?: Array<{
+    index: number;
+    email: string;
+    password?: string;
+    productTitle?: string;
+  }>;
+  isHybridOrder?: boolean;
+  instantItemsCount?: number;
+  activationItemsCount?: number;
+  pendingNotice?: string;
   totalPriceToman: number;
   totalPriceUsd?: number;
   paymentGateway?: string;
@@ -49,7 +59,22 @@ export function renderOrderReceiptEmail(data: OrderReceiptEmailData): { html: st
     `).join('')
     : '<div style="background-color: #ffffff; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 12px; text-align: center; color: #64748b; font-size: 13px;">اطلاعات اشتراک به زودی توسط پشتیبانی صادر و در پنل کاربری درج می‌شود.</div>';
 
-  const subject = `رسید و تحویل اشتراک سفارش #${data.orderNumber} - ارزان اکانت`;
+  const hybridNoticeHtml = data.isHybridOrder
+    ? `
+      <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 16px; margin-top: 14px; text-align: right;">
+        <div style="font-size: 13px; font-weight: bold; color: #92400e; margin-bottom: 6px;">
+          ⏳ بخش در صف فعال‌سازی کارشناسان (${data.activationItemsCount || 'سفارش اختصاصی'} کالا):
+        </div>
+        <p style="font-size: 12px; color: #78350f; line-height: 1.8; margin: 0;">
+          بقیه سفارش شما که نیازمند فعال‌سازی اختصاصی روی اکانت شخصی شما می‌باشد، در صف بررسی کارشناسان فنی قرار گرفت. پس از تکمیل فرآیند توسط ادمین‌ها، پیامک و ایمیل فعال‌سازی نهایی برای شما ارسال خواهد شد و نیازی به اقدام مجدد از سمت شما نیست.
+        </p>
+      </div>
+    `
+    : '';
+
+  const subject = data.isHybridOrder
+    ? `تحویل بخش آنی و تایید سفارش #${data.orderNumber} - ارزان اکانت`
+    : `رسید و تحویل اشتراک سفارش #${data.orderNumber} - ارزان اکانت`;
 
   const html = `
 <!DOCTYPE html>
@@ -134,6 +159,7 @@ export function renderOrderReceiptEmail(data: OrderReceiptEmailData): { html: st
                       🔑 <strong>مشخصات اکانت و لایسنس تحویل‌شده:</strong>
                     </div>
                     ${accountsHtml}
+                    ${hybridNoticeHtml}
                     <div style="font-size: 11.5px; color: #006972; margin-top: 10px; line-height: 1.5;">
                       ℹ️ <em>نکته: در صورت نیاز به ورود به اکانت یا قبول دعوتنامه، لطفاً با ایمیل ثبت‌شده لاگین بفرمایید.</em>
                     </div>
@@ -261,6 +287,7 @@ ${greeting}
 مشخصات اکانت و لایسنس تحویل‌شده:
 ${plainAccounts}
 --------------------------------------------------
+${data.isHybridOrder ? `\n[توجه - بخش در صف فعال‌سازی]:\nبقیه سفارش شما که نیازمند فعال‌سازی توسط ادمین‌ها می‌باشد در صف پردازش قرار گرفت. پس از تکمیل فرآیند توسط ادمین‌ها برای شما پیام و ایمیل فعال‌سازی ارسال خواهد شد.\n` : ''}
 
 اقلام سفارش:
 ${plainItems}

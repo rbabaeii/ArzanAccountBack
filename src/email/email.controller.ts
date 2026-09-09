@@ -63,4 +63,35 @@ export class EmailController {
     }
     return ApiResponse.success(result, 'رسید سفارش با موفقیت به ایمیل خریدار ارسال شد.');
   }
+
+  @Post('send-custom')
+  async sendCustomEmail(
+    @Body()
+    body: {
+      recipientEmail: string;
+      recipientName?: string;
+      subject: string;
+      message: string;
+      badge?: string;
+      buttonText?: string;
+      buttonUrl?: string;
+      adminSender?: string;
+    },
+  ) {
+    if (!body.recipientEmail || !body.recipientEmail.includes('@')) {
+      return ApiResponse.error('آدرس ایمیل گیرنده نامعتبر است.');
+    }
+    if (!body.subject || !body.subject.trim()) {
+      return ApiResponse.error('موضوع ایمیل نمی‌تواند خالی باشد.');
+    }
+    if (!body.message || !body.message.trim()) {
+      return ApiResponse.error('متن ایمیل نمی‌تواند خالی باشد.');
+    }
+
+    const result = await this.emailService.sendCustomUserEmail(body);
+    if (!result.success) {
+      return ApiResponse.error(result.error || 'ارسال ایمیل سفارشی با خطا مواجه شد.');
+    }
+    return ApiResponse.success(result, 'ایمیل سفارشی با موفقیت برای کاربر ارسال شد.');
+  }
 }

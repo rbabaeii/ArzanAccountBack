@@ -55,6 +55,7 @@ model Product {
   reviewCount         Int       @default(15)
   salePriceToman      Float?
   discountPercent     Float?
+  tags                String?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 }
@@ -80,6 +81,22 @@ model Order {
   deliveredAccounts    String?
   items                String
   paymentGateway       String    @default("zarinpal")
+  targetAccountEmail   String?
+  targetAccountPassword String?
+  deliveryType         String?   @default("link") // link, credentials, account_activation
+  accountCredentials   String?
+  isHybridOrder        Boolean?  @default(false)
+  instantItemsCount    Int?      @default(0)
+  activationItemsCount Int?      @default(0)
+  refundReason         String?
+  refundCardNumber     String?
+  refundIban           String?
+  refundAmountToman    Int?
+  refundReceiptUrl     String?
+  refundTrackingCode   String?
+  refundedAt           DateTime?
+  refundedByAdminId    String?
+  refundedByAdminName  String?
   approvedByAdminId    String?
   approvedByAdminName  String?
   approvedByAdminPhone String?

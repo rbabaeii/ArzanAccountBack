@@ -17,6 +17,9 @@ export class SettingsService {
     const walletBalanceUsd = parseFloat(map['WALLET_BALANCE_USD'] || '0.30');
     const lastSyncTime = map['LAST_SYNC_TIME'] || 'هم‌اکنون';
 
+    const maxPurchaseRatioDenominator = parseInt(map['MAX_PURCHASE_RATIO_DENOMINATOR'] || '3', 10);
+    const purchaseRatioExemptionThreshold = parseInt(map['PURCHASE_RATIO_EXEMPTION_THRESHOLD'] || '10', 10);
+
     return {
       usdToRialRate,
       usdToTomanRate: Math.round(usdToRialRate / 10),
@@ -25,6 +28,8 @@ export class SettingsService {
       lastSyncTime,
       siteName: map['SITE_NAME'] || 'ارزان اکانت (arzanAccount)',
       supportTelegram: map['SUPPORT_TELEGRAM'] || '@arzan_support',
+      maxPurchaseRatioDenominator,
+      purchaseRatioExemptionThreshold,
     };
   }
 
