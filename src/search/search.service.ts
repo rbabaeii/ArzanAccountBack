@@ -17,6 +17,7 @@ export interface IndexedProduct {
   costPriceUsd: number;
   retailPriceUsd: number;
   priceToman: number;
+  isActive: boolean;
   inStock: boolean;
   stockCount: number;
   image?: string | null;
@@ -187,6 +188,7 @@ export class SearchService implements OnModuleInit {
             costPriceUsd: p.costPriceUsd,
             retailPriceUsd: p.retailPriceUsd,
             priceToman: price.finalToman,
+            isActive: p.isActive,
             inStock: p.inStock,
             stockCount: p.stockCount || 0,
             image: p.image,
@@ -316,6 +318,14 @@ export class SearchService implements OnModuleInit {
     const scoredProducts: { item: IndexedProduct; score: number; highlights: string[] }[] = [];
 
     for (const prod of this.productsIndex) {
+      // User requirement: In ElasticSearch, only show active and in-stock products to customers!
+      if (scope !== 'admin') {
+        if (!prod.isActive) continue;
+        if (!prod.inStock || (prod.stockCount !== null && prod.stockCount !== undefined && prod.stockCount <= 0)) {
+          continue;
+        }
+      }
+
       let score = 0;
       const highlights: string[] = [];
 

@@ -41,6 +41,10 @@ export class AuthService {
     });
 
     this.logger.log(`[AUTH PHONE OTP] Generated dynamic code ${otpCode} for phone ${cleanPhone}`);
+    console.log(`\n======================================================================`);
+    console.log(`🔑 [AUTH OTP CODE] Phone: ${cleanPhone} | CODE: >>> ${otpCode} <<<`);
+    console.log(`⏰ Valid for 5 minutes (300 seconds)`);
+    console.log(`======================================================================\n`);
 
     return {
       success: true,
@@ -142,7 +146,7 @@ export class AuthService {
 
     if (!user || !user.email) {
       throw new BadRequestException(
-        'برای این شماره تلفن، هنوز هیچ آدرس ایمیلی در حساب کاربری ثبت نشده است. لطفاً ابتدا با پیامک وارد شده و ایمیل خود را در پروفایل ثبت کنید.'
+        'برای این شماره تلفن، هیچ آدرس ایمیلی در حساب کاربری ثبت نشده است.'
       );
     }
 
@@ -158,12 +162,21 @@ export class AuthService {
     const masked = namePart.length <= 2 ? namePart[0] + '***' : namePart.slice(0, 2) + '***' + namePart.slice(-1);
     const maskedEmail = `${masked}@${domainPart}`;
 
-    try {
-      await this.emailService.sendOtpEmail(user.email, otpCode, cleanPhone);
-      this.logger.log(`[AUTH EMAIL OTP] Sent code ${otpCode} to ${user.email} for phone ${cleanPhone}`);
-    } catch (err: any) {
-      this.logger.warn(`Failed to send email OTP to ${user.email}: ${err?.message}`);
-    }
+    this.logger.log(`[AUTH EMAIL OTP] Sending code ${otpCode} to ${user.email} for phone ${cleanPhone}`);
+    console.log(`\n======================================================================`);
+    console.log(`📧 [AUTH EMAIL OTP] Phone: ${cleanPhone} | Email: ${user.email} | CODE: >>> ${otpCode} <<<`);
+    console.log(`⏰ Valid for 5 minutes (300 seconds)`);
+    console.log(`======================================================================\n`);
+
+    // Dispatch email sending in background so HTTP response is instant (<50ms)
+    this.emailService
+      .sendOtpEmail(user.email, otpCode, cleanPhone)
+      .then(() => {
+        this.logger.log(`[AUTH EMAIL OTP] Successfully delivered OTP email to ${user.email}`);
+      })
+      .catch((err: any) => {
+        this.logger.warn(`Failed to deliver email OTP to ${user.email}: ${err?.message}`);
+      });
 
     return {
       success: true,
