@@ -19,6 +19,12 @@ export class SettingsService {
 
     const maxPurchaseRatioDenominator = parseInt(map['MAX_PURCHASE_RATIO_DENOMINATOR'] || '3', 10);
     const purchaseRatioExemptionThreshold = parseInt(map['PURCHASE_RATIO_EXEMPTION_THRESHOLD'] || '10', 10);
+    const currencyApiKey = map['CURRENCY_API_KEY'] || 'BNrVb9bLT9dLPpgY4UDvX8bqJTvEaqKw';
+    const currencySyncIntervalMinutes = parseInt(map['CURRENCY_SYNC_INTERVAL_MINUTES'] || '15', 10);
+    const enableCurrencyAutoSync = map['CURRENCY_AUTO_SYNC_ENABLED'] !== 'false';
+    const lastCurrencySyncTime = map['LAST_CURRENCY_SYNC_TIME'] || 'هنوز استعلام نشده';
+    const lastCurrencyPriceToman = parseInt(map['LAST_CURRENCY_PRICE_TOMAN'] || '0', 10) || Math.round(usdToRialRate / 10);
+    const lastCurrencyChangePercent = parseFloat(map['LAST_CURRENCY_CHANGE_PERCENT'] || '0');
 
     return {
       usdToRialRate,
@@ -30,6 +36,12 @@ export class SettingsService {
       supportTelegram: map['SUPPORT_TELEGRAM'] || '@arzan_support',
       maxPurchaseRatioDenominator,
       purchaseRatioExemptionThreshold,
+      currencyApiKey,
+      currencySyncIntervalMinutes: isNaN(currencySyncIntervalMinutes) || currencySyncIntervalMinutes < 1 ? 15 : currencySyncIntervalMinutes,
+      enableCurrencyAutoSync,
+      lastCurrencySyncTime,
+      lastCurrencyPriceToman,
+      lastCurrencyChangePercent,
     };
   }
 
