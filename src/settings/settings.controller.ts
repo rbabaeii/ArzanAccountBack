@@ -1,10 +1,14 @@
-import { Controller, Get, Put, Body, Query } from '@nestjs/common';
+import { Controller, Get, Put, Post, Body, Query } from '@nestjs/common';
 import { SettingsService } from './settings.service';
+import { CurrencySyncService } from './currency-sync.service';
 import { ApiResponse } from '../common/dto/api-response.dto';
 
 @Controller('settings')
 export class SettingsController {
-  constructor(private readonly settingsService: SettingsService) {}
+  constructor(
+    private readonly settingsService: SettingsService,
+    private readonly currencySyncService: CurrencySyncService,
+  ) {}
 
   @Get()
   async getSettings() {
@@ -35,6 +39,50 @@ export class SettingsController {
     }
     const updated = await this.settingsService.getAllSettings();
     return ApiResponse.success(updated, 'نرخ ارز و حاشیه سود با موفقیت ذخیره شد.');
+  }
+
+  /**
+   * Manual trigger: immediately query BrsApi and update USD rate.
+   */
+  @Post('currency/sync-now')
+  async syncCurrencyNow(@Body('user') user?: string) {
+    const result = await this.currencySyncService.syncUsdRate(
+      user || 'مدیر سیستم (استعلام دستی)',
+    );
+    const settings = await this.settingsService.getAllSettings();
+    return ApiResponse.success({ ...result, settings }, result.message);
+  }
+
+  /**
+   * Update currency sync configurations (API key, interval, auto-sync).
+   */
+  @Put('currency/sync-config')
+  async updateCurrencySyncConfig(
+    @Body('apiKey') apiKey?: string,
+    @Body('intervalMinutes') intervalMinutes?: number,
+    @Body('enableAutoSync') enableAutoSync?: boolean,
+    @Body('user') user?: string,
+  ) {
+    const config = await this.currencySyncService.updateCurrencySyncConfig({
+      apiKey,
+      intervalMinutes,
+      enableAutoSync,
+      user,
+    });
+    const settings = await this.settingsService.getAllSettings();
+    return ApiResponse.success(
+      { config, settings },
+      'تنظیمات وب‌سرویس استعلام خودکار دلار با موفقیت ذخیره شد.',
+    );
+  }
+
+  /**
+   * Get current currency sync status.
+   */
+  @Get('currency/sync-status')
+  async getCurrencySyncStatus() {
+    const config = await this.currencySyncService.getCurrencySyncConfig();
+    return ApiResponse.success(config);
   }
 
   @Get('logs')
