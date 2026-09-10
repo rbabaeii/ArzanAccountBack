@@ -98,6 +98,14 @@ export class IrMarketService {
   }
 
   /**
+   * GET /api/buyer/products/{id}
+   * Fetches single product real-time stock and price from irMarket
+   */
+  async getProduct(irmarketProductId: number | string): Promise<any> {
+    return this.request<any>(`/api/buyer/products/${irmarketProductId}`);
+  }
+
+  /**
    * GET /api/buyer/orders/{id}
    * Polls an order status and credentials
    */

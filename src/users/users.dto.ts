@@ -50,3 +50,70 @@ export class UpdateUserStatusDto {
   @IsString()
   adminUser?: string;
 }
+
+export class UpdateProfileDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  nationalCode?: string;
+
+  @IsOptional()
+  @IsString()
+  birthDate?: string;
+
+  @IsOptional()
+  @IsString()
+  jobTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  avatar?: string;
+
+  @IsOptional()
+  @IsString()
+  bankCardsJson?: string;
+
+  @IsOptional()
+  @IsString()
+  addressesJson?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isTwoFactorEnabled?: boolean;
+}
+
+export class TopUpWalletDto {
+  amountToman: number;
+}
+
+export class ConvertPointsDto {
+  points: number;
+}
+
+export class CreateWithdrawalDto {
+  amountToman: number;
+  cardNumber?: string;
+  sheba?: string;
+  accountOwnerName?: string;
+  userNote?: string;
+}
+
+export class ProcessWithdrawalDto {
+  action: 'APPROVE' | 'REJECT';
+  adminNote?: string;
+  bankTrackingCode?: string;
+  adminName?: string;
+}
+
+

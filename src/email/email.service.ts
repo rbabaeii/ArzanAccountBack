@@ -6,6 +6,9 @@ import { renderOrderReceiptEmail, OrderReceiptEmailData } from './templates/orde
 import { renderOrderInvoiceEmail, OrderInvoiceEmailData } from './templates/order-invoice.template';
 import { renderNotificationEmail, NotificationEmailData } from './templates/notification.template';
 import { renderTestEmail, TestEmailData } from './templates/test-email.template';
+import { renderOtpEmail, OtpEmailData } from './templates/otp-email.template';
+import { renderOrderDeliveryEmail, OrderDeliveryEmailData } from './templates/delivery-email.template';
+import { renderCustomUserEmail, CustomUserEmailData } from './templates/custom-email.template';
 
 export interface SmtpConfig {
   host: string;
@@ -94,6 +97,9 @@ export class EmailService {
         tls: {
           rejectUnauthorized: false,
         },
+        connectionTimeout: 8000,
+        greetingTimeout: 8000,
+        socketTimeout: 8000,
       });
       this.cachedConfigHash = configHash;
     }
@@ -227,6 +233,55 @@ export class EmailService {
       text,
       templateName: 'notification',
       metadata: { title: data.title },
+    });
+  }
+
+  /**
+   * Send One-Time Password (OTP) code via Email for login
+   */
+  async sendOtpEmail(to: string, code: string, phone: string) {
+    const { html, text, subject } = renderOtpEmail({ code, phone });
+    return this.executeSend({
+      to,
+      subject,
+      html,
+      text,
+      templateName: 'otp_code',
+      metadata: { phone },
+    });
+  }
+
+  /**
+   * Send Order Delivery / Activation / Refund Email
+   */
+  async sendDeliveryEmail(data: OrderDeliveryEmailData) {
+    const { html, text, subject } = renderOrderDeliveryEmail(data);
+    return this.executeSend({
+      to: data.customerEmail,
+      subject,
+      html,
+      text,
+      templateName: data.deliveryType,
+      metadata: { orderNumber: data.orderNumber, productTitle: data.productTitle },
+    });
+  }
+
+  /**
+   * Send Custom Direct Email to Any User
+   */
+  async sendCustomUserEmail(data: CustomUserEmailData) {
+    const { html, text, subject } = renderCustomUserEmail(data);
+    return this.executeSend({
+      to: data.recipientEmail,
+      subject,
+      html,
+      text,
+      templateName: 'custom_direct',
+      metadata: {
+        recipientName: data.recipientName,
+        badge: data.badge,
+        adminSender: data.adminSender,
+      },
     });
   }
 

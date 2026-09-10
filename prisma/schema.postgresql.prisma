@@ -52,6 +52,7 @@ model Product {
   image               String?
   rating              Float     @default(4.9)
   reviewCount         Int       @default(15)
+  tags                String?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 }
@@ -77,6 +78,18 @@ model Order {
   deliveredAccounts    String?
   items                String
   paymentGateway       String    @default("zarinpal")
+  targetAccountEmail   String?
+  targetAccountPassword String?
+  deliveryType         String?   @default("link") // link, credentials, account_activation
+  refundReason         String?
+  refundCardNumber     String?
+  refundIban           String?
+  refundAmountToman    Int?
+  refundReceiptUrl     String?
+  refundTrackingCode   String?
+  refundedAt           DateTime?
+  refundedByAdminId    String?
+  refundedByAdminName  String?
   approvedByAdminId    String?
   approvedByAdminName  String?
   approvedByAdminPhone String?
@@ -120,4 +133,26 @@ model EmailLog {
   errorMessage String?
   metadata     String?
   createdAt    DateTime @default(now())
+}
+
+model User {
+  id                 String    @id @default(cuid())
+  name               String
+  email              String?   @unique
+  phone              String?   @unique
+  password           String?
+  role               String    @default("USER") // SUPER_ADMIN, CATALOG_MANAGER, FINANCE_ADMIN, SUPPORT_ADMIN, USER
+  status             String    @default("ACTIVE") // ACTIVE, BLOCKED, PENDING
+  walletBalanceToman Int       @default(0)
+  clubPoints         Int       @default(150)
+  nationalCode       String?
+  birthDate          String?
+  jobTitle           String?
+  bankCardsJson      String?   // JSON array of user bank cards
+  addressesJson      String?   // JSON array of user addresses
+  isTwoFactorEnabled Boolean   @default(false)
+  avatar             String?
+  lastLoginAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 }

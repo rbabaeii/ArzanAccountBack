@@ -17,6 +17,16 @@ export class SettingsService {
     const walletBalanceUsd = parseFloat(map['WALLET_BALANCE_USD'] || '0.30');
     const lastSyncTime = map['LAST_SYNC_TIME'] || 'هم‌اکنون';
 
+    const maxPurchaseRatioDenominator = parseInt(map['MAX_PURCHASE_RATIO_DENOMINATOR'] || '3', 10);
+    const purchaseRatioExemptionThreshold = parseInt(map['PURCHASE_RATIO_EXEMPTION_THRESHOLD'] || '10', 10);
+    const currencyApiKey = map['CURRENCY_API_KEY'] || 'BNrVb9bLT9dLPpgY4UDvX8bqJTvEaqKw';
+    const currencySyncIntervalMinutes = parseInt(map['CURRENCY_SYNC_INTERVAL_MINUTES'] || '15', 10);
+    const enableCurrencyAutoSync = map['CURRENCY_AUTO_SYNC_ENABLED'] !== 'false';
+    const lastCurrencySyncTime = map['LAST_CURRENCY_SYNC_TIME'] || 'هنوز استعلام نشده';
+    const lastCurrencyPriceToman = parseInt(map['LAST_CURRENCY_PRICE_TOMAN'] || '0', 10) || Math.round(usdToRialRate / 10);
+    const lastCurrencyChangePercent = parseFloat(map['LAST_CURRENCY_CHANGE_PERCENT'] || '0');
+    const orderCashbackPercent = parseInt(map['ORDER_CASHBACK_PERCENT'] || '10', 10);
+
     return {
       usdToRialRate,
       usdToTomanRate: Math.round(usdToRialRate / 10),
@@ -25,6 +35,15 @@ export class SettingsService {
       lastSyncTime,
       siteName: map['SITE_NAME'] || 'ارزان اکانت (arzanAccount)',
       supportTelegram: map['SUPPORT_TELEGRAM'] || '@arzan_support',
+      maxPurchaseRatioDenominator,
+      purchaseRatioExemptionThreshold,
+      orderCashbackPercent: isNaN(orderCashbackPercent) || orderCashbackPercent < 0 ? 10 : orderCashbackPercent,
+      currencyApiKey,
+      currencySyncIntervalMinutes: isNaN(currencySyncIntervalMinutes) || currencySyncIntervalMinutes < 1 ? 15 : currencySyncIntervalMinutes,
+      enableCurrencyAutoSync,
+      lastCurrencySyncTime,
+      lastCurrencyPriceToman,
+      lastCurrencyChangePercent,
     };
   }
 

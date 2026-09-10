@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { IrMarketService } from '../irmarket/irmarket.service';
 import { IrMarketProductRaw } from '../irmarket/irmarket.dto';
+import { SearchService } from '../search/search.service';
 
 @Injectable()
 export class SyncService {
@@ -11,7 +13,21 @@ export class SyncService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly irMarketService: IrMarketService,
+    @Optional() private readonly searchService?: SearchService,
   ) {}
+
+  /**
+   * Automatic 30-minute sync job for store inventory and prices
+   */
+  @Cron('0 */30 * * * *')
+  async handleCronSync() {
+    this.logger.log('⏰ [CRON] Starting automatic 30-minute inventory & price synchronization...');
+    try {
+      await this.syncCatalog('سیستم خودکار زمان‌بندی‌شده (هر ۳۰ دقیقه)');
+    } catch (err: any) {
+      this.logger.error(`Cron sync failed: ${err?.message}`);
+    }
+  }
 
   /**
    * Main sync routine:
@@ -147,6 +163,12 @@ export class SyncService {
 
       this.logger.log(`Sync completed successfully. Created: ${createdCount}, Updated: ${updatedCount}`);
 
+      // Instantly update ElasticSearch index with new prices and stock
+      if (this.searchService) {
+        this.logger.log('Triggering full ElasticSearch re-index after catalog sync...');
+        await this.searchService.reindexAll();
+      }
+
       return {
         success: true,
         totalFetched: rawProducts.length,
@@ -162,6 +184,56 @@ export class SyncService {
     } finally {
       this.isSyncing = false;
     }
+  }
+
+  /**
+   * Sync a single product's live price and stock from irMarket
+   */
+  async syncSingleProduct(externalId: number, triggeredBy = 'مدیر سیستم') {
+    this.logger.log(`Syncing single product #${externalId} from irMarket...`);
+    const raw = await this.irMarketService.getProduct(externalId);
+    if (!raw) {
+      throw new Error(`محصول با شناسه ${externalId} در وب‌سرویس irMarket یافت نشد.`);
+    }
+
+    const existing = await this.prisma.product.findUnique({
+      where: { externalId },
+    });
+
+    if (!existing) {
+      throw new Error(`محصول با شناسه ${externalId} در دیتابیس محلی یافت نشد.`);
+    }
+
+    const updated = await this.prisma.product.update({
+      where: { id: existing.id },
+      data: {
+        costPriceUsd: raw.price_usd ?? existing.costPriceUsd,
+        retailPriceUsd: raw.retail_usd ?? existing.retailPriceUsd,
+        pricePer1000Usd: raw.price_per_1000_usd ?? existing.pricePer1000Usd,
+        inStock: raw.in_stock !== false,
+        stockCount: raw.stock ?? existing.stockCount,
+        rawDetails: JSON.stringify(raw),
+      },
+    });
+
+    if (this.searchService) {
+      await this.searchService.reindexAll();
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        action: 'همگام‌سازی تکی محصول با irMarket',
+        details: `بروزرسانی مشخصات محصول ${existing.customTitle} (#${externalId}): قیمت خرید ${raw.price_usd}$، موجودی ${raw.stock}`,
+        user: triggeredBy,
+        type: 'sync',
+      },
+    });
+
+    return {
+      success: true,
+      product: updated,
+      message: `اطلاعات محصول #${externalId} با موفقیت از irMarket بروزرسانی شد.`,
+    };
   }
 
   private slugify(text: string): string {
