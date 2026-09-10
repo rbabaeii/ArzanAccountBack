@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { ApiResponse } from '../common/dto/api-response.dto';
-import { CreateUserDto, UpdateUserRoleDto, UpdateUserStatusDto, UpdateProfileDto, TopUpWalletDto, ConvertPointsDto } from './users.dto';
+import { CreateUserDto, UpdateUserRoleDto, UpdateUserStatusDto, UpdateProfileDto, TopUpWalletDto, ConvertPointsDto, CreateWithdrawalDto, ProcessWithdrawalDto } from './users.dto';
 
 @Controller('users')
 export class UsersController {
@@ -62,6 +62,42 @@ export class UsersController {
       offset: offset ? Number(offset) : undefined,
     });
     return ApiResponse.success(data);
+  }
+
+  /**
+   * Admin fetches all withdrawal requests (placed before :id to prevent shadowing)
+   */
+  @Get('admin/withdrawals-list')
+  async getAdminWithdrawals(
+    @Query('status') status?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    const result = await this.usersService.getAdminWithdrawals({
+      status,
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+    });
+    return ApiResponse.success(result);
+  }
+
+  /**
+   * Admin approves or rejects a withdrawal request
+   */
+  @Post('admin/withdrawals/:id/process')
+  async processWithdrawal(
+    @Param('id') id: string,
+    @Body() dto: ProcessWithdrawalDto,
+  ) {
+    try {
+      const result = await this.usersService.processWithdrawal(id, dto);
+      return ApiResponse.success(
+        result,
+        dto.action === 'APPROVE' ? 'درخواست تسویه با موفقیت تایید شد.' : 'درخواست تسویه رد شد.',
+      );
+    } catch (err: any) {
+      return ApiResponse.error(err?.message || 'خطا در بررسی درخواست تسویه.');
+    }
   }
 
   @Get(':id/activity-summary')
@@ -126,6 +162,15 @@ export class UsersController {
     return ApiResponse.success(updated, 'کیف پول با موفقیت شارژ گردید.');
   }
 
+  @Post(':id/bind-referral')
+  async bindReferral(
+    @Param('id') id: string,
+    @Body('referralCode') referralCode: string,
+  ) {
+    const user = await this.usersService.bindReferral(id, referralCode);
+    return ApiResponse.success(user, 'کد معرف با موفقیت برای حساب شما ثبت گردید.');
+  }
+
   @Post(':id/convert-points')
   async convertPoints(
     @Param('id') id: string,
@@ -142,5 +187,30 @@ export class UsersController {
   ) {
     const result = await this.usersService.deleteUser(id, adminUser);
     return ApiResponse.success(result, 'کاربر حذف گردید.');
+  }
+
+  /**
+   * User creates a withdrawal request
+   */
+  @Post(':id/withdrawals')
+  async requestWithdrawal(
+    @Param('id') id: string,
+    @Body() dto: CreateWithdrawalDto,
+  ) {
+    try {
+      const result = await this.usersService.requestWithdrawal(id, dto);
+      return ApiResponse.success(result, 'درخواست تسویه با موفقیت ثبت شد و به واحد مالی ارجاع گردید.');
+    } catch (err: any) {
+      return ApiResponse.error(err?.message || 'خطا در ثبت درخواست تسویه.');
+    }
+  }
+
+  /**
+   * User fetches their withdrawal requests
+   */
+  @Get(':id/withdrawals')
+  async getUserWithdrawals(@Param('id') id: string) {
+    const result = await this.usersService.getUserWithdrawals(id);
+    return ApiResponse.success(result);
   }
 }

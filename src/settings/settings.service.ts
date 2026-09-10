@@ -25,6 +25,7 @@ export class SettingsService {
     const lastCurrencySyncTime = map['LAST_CURRENCY_SYNC_TIME'] || 'هنوز استعلام نشده';
     const lastCurrencyPriceToman = parseInt(map['LAST_CURRENCY_PRICE_TOMAN'] || '0', 10) || Math.round(usdToRialRate / 10);
     const lastCurrencyChangePercent = parseFloat(map['LAST_CURRENCY_CHANGE_PERCENT'] || '0');
+    const orderCashbackPercent = parseInt(map['ORDER_CASHBACK_PERCENT'] || '10', 10);
 
     return {
       usdToRialRate,
@@ -36,6 +37,7 @@ export class SettingsService {
       supportTelegram: map['SUPPORT_TELEGRAM'] || '@arzan_support',
       maxPurchaseRatioDenominator,
       purchaseRatioExemptionThreshold,
+      orderCashbackPercent: isNaN(orderCashbackPercent) || orderCashbackPercent < 0 ? 10 : orderCashbackPercent,
       currencyApiKey,
       currencySyncIntervalMinutes: isNaN(currencySyncIntervalMinutes) || currencySyncIntervalMinutes < 1 ? 15 : currencySyncIntervalMinutes,
       enableCurrencyAutoSync,

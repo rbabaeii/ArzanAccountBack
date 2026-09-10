@@ -29,6 +29,24 @@ export class VerifyOtpDto {
   @IsString({ message: 'کد تایید باید رشته باشد.' })
   @IsNotEmpty({ message: 'کد تایید الزامی است.' })
   code: string;
+
+  @IsOptional()
+  @IsString()
+  referralCode?: string;
+}
+
+export class VerifyEmailOtpDto {
+  @IsString({ message: 'ایمیل الزامی است.' })
+  @IsNotEmpty({ message: 'ایمیل نمی‌تواند خالی باشد.' })
+  email: string;
+
+  @IsString({ message: 'کد تایید الزامی است.' })
+  @IsNotEmpty({ message: 'کد تایید الزامی است.' })
+  code: string;
+
+  @IsOptional()
+  @IsString()
+  referralCode?: string;
 }
 
 export class LoginPasswordDto {
@@ -42,6 +60,10 @@ export class LoginPasswordDto {
   @IsString({ message: 'رمز عبور باید رشته باشد.' })
   @IsNotEmpty({ message: 'رمز عبور الزامی است.' })
   password: string;
+
+  @IsOptional()
+  @IsString()
+  referralCode?: string;
 }
 
 export class UpdatePasswordDto {

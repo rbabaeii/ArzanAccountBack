@@ -142,15 +142,15 @@ export function renderOrderDeliveryEmail(data: OrderDeliveryEmailData): { html: 
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${subject}</title>
 </head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Tahoma, Arial, sans-serif; background-color: #f1f5f9; color: #0f172a; margin: 0; padding: 24px 12px; direction: rtl;">
-  <div style="max-width: 560px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;">
+<body dir="rtl" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Tahoma, Arial, sans-serif; background-color: #f1f5f9; color: #0f172a; margin: 0; padding: 24px 12px; direction: rtl !important; text-align: right !important;">
+  <div class="container" dir="rtl" style="max-width: 560px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; direction: rtl !important; text-align: right !important;">
     <div style="background: ${badgeColor}; padding: 24px; text-align: center; color: #ffffff;">
-      <h1 style="margin: 0 0 6px 0; font-size: 18px; font-weight: 800;">ارزان اکانت</h1>
+      <h1 style="margin: 0 0 6px 0; font-size: 18px; font-weight: 800; color: #ffffff;">ارزان اکانت</h1>
       <span style="font-size: 12px; opacity: 0.95; font-weight: 600;">${badgeTitle}</span>
     </div>
-    <div style="padding: 28px 24px;">
-      <div style="font-size: 12px; color: #64748b; margin-bottom: 16px;">
-        شماره سفارش: <strong style="font-family: monospace; color: #0f172a;">#${data.orderNumber}</strong>
+    <div style="padding: 28px 24px; direction: rtl !important; text-align: right !important;">
+      <div style="font-size: 12px; color: #64748b; margin-bottom: 16px; direction: rtl; text-align: right;">
+        شماره سفارش: <strong style="font-family: monospace; color: #0f172a; direction: ltr; display: inline-block;">#${data.orderNumber}</strong>
       </div>
       ${bodyContentHtml}
       <div style="margin-top: 24px; text-align: center;">
@@ -159,7 +159,7 @@ export function renderOrderDeliveryEmail(data: OrderDeliveryEmailData): { html: 
         </a>
       </div>
     </div>
-    <div style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 16px 24px; text-align: center; font-size: 11px; color: #64748b;">
+    <div style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 16px 24px; text-align: center; font-size: 11px; color: #64748b; direction: rtl;">
       ارزان اکانت | مرجع تخصصی لایسنس و اشتراک‌های دیجیتال
       <br>
       <a href="${siteUrl}" style="color: #0d9488; text-decoration: none;">${siteUrl}</a>

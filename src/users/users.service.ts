@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto, UpdateUserRoleDto, UpdateUserStatusDto, UpdateProfileDto } from './users.dto';
 
@@ -336,24 +336,231 @@ export class UsersService {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('کاربر یافت نشد.');
 
-    const currentBalance = user.walletBalanceToman || 0;
-    const newBalance = currentBalance + Math.max(0, amountToman);
+    const addAmount = Math.max(0, amountToman);
+    const newDirect = (user.directDepositBalance || 0) + addAmount;
+    const newBonus = user.cashbackBonusBalance || 0;
+    const newTotal = newDirect + newBonus;
 
     const updated = await this.prisma.user.update({
       where: { id },
-      data: { walletBalanceToman: newBalance },
+      data: {
+        directDepositBalance: newDirect,
+        walletBalanceToman: newTotal,
+      },
     });
 
     await this.prisma.auditLog.create({
       data: {
-        action: 'شارژ کیف پول کاربر',
-        details: `مبلغ ${amountToman} تومان به موجودی کیف پول کاربر ${user.name} افزوده شد. موجودی جدید: ${newBalance} تومان.`,
+        action: 'شارژ مستقیم کیف پول کاربر',
+        details: `مبلغ ${new Intl.NumberFormat('fa-IR').format(addAmount)} تومان واریز مستقیم به کیف پول کاربر ${user.name} افزوده شد. موجودی واریزی: ${newDirect} تومان. موجودی کل: ${newTotal} تومان.`,
         user: user.name,
         type: 'finance',
       },
     });
 
     return updated;
+  }
+
+  /**
+   * User submits a withdrawal request.
+   * Can ONLY withdraw up to directDepositBalance (cashback is non-withdrawable).
+   */
+  async requestWithdrawal(userId: string, dto: {
+    amountToman: number;
+    cardNumber?: string;
+    sheba?: string;
+    accountOwnerName?: string;
+    userNote?: string;
+  }) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('کاربر یافت نشد.');
+
+    const amount = Math.floor(Number(dto.amountToman));
+    if (isNaN(amount) || amount <= 0) {
+      throw new Error('مبلغ درخواستی برای تسویه نامعتبر است.');
+    }
+
+    const maxWithdrawable = user.directDepositBalance || 0;
+    if (amount > maxWithdrawable) {
+      throw new Error(
+        `حداکثر سقف مجاز تسویه وجه برای شما ${new Intl.NumberFormat('fa-IR').format(maxWithdrawable)} تومان است. مبالغ هدیه و کش‌بک (${new Intl.NumberFormat('fa-IR').format(user.cashbackBonusBalance || 0)} تومان) تنها برای خرید محصولات سایت قابل استفاده هستند و امکان برداشت نقدی ندارند.`
+      );
+    }
+
+    const request = await this.prisma.withdrawalRequest.create({
+      data: {
+        userId,
+        amountToman: amount,
+        cardNumber: dto.cardNumber || null,
+        sheba: dto.sheba || null,
+        accountOwnerName: dto.accountOwnerName || user.name,
+        userNote: dto.userNote || null,
+        status: 'PENDING',
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            email: true,
+            walletBalanceToman: true,
+            directDepositBalance: true,
+            cashbackBonusBalance: true,
+          },
+        },
+      },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        action: 'ثبت درخواست تسویه و برداشت وجه',
+        details: `کاربر ${user.name} درخواست تسویه مبلغ ${new Intl.NumberFormat('fa-IR').format(amount)} تومان را ثبت نمود.`,
+        user: user.name,
+        type: 'finance',
+      },
+    });
+
+    return request;
+  }
+
+  /**
+   * Get user's own withdrawal requests
+   */
+  async getUserWithdrawals(userId: string) {
+    return this.prisma.withdrawalRequest.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Admin: List all withdrawal requests with user balance breakdown
+   */
+  async getAdminWithdrawals(params?: { status?: string; limit?: number; offset?: number }) {
+    const where: any = {};
+    if (params?.status && params.status !== 'all') {
+      where.status = params.status;
+    }
+
+    const [requests, totalCount] = await Promise.all([
+      this.prisma.withdrawalRequest.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+              email: true,
+              walletBalanceToman: true,
+              directDepositBalance: true,
+              cashbackBonusBalance: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: params?.limit ? Number(params.limit) : 50,
+        skip: params?.offset ? Number(params.offset) : 0,
+      }),
+      this.prisma.withdrawalRequest.count({ where }),
+    ]);
+
+    return {
+      requests,
+      totalCount,
+    };
+  }
+
+  /**
+   * Admin: Process (Approve or Reject) a withdrawal request
+   */
+  async processWithdrawal(id: string, dto: {
+    action: 'APPROVE' | 'REJECT';
+    adminNote?: string;
+    bankTrackingCode?: string;
+    adminName?: string;
+  }) {
+    const request = await this.prisma.withdrawalRequest.findUnique({
+      where: { id },
+      include: { user: true },
+    });
+    if (!request) throw new NotFoundException('درخواست تسویه یافت نشد.');
+
+    if (request.status !== 'PENDING') {
+      throw new Error('این درخواست قبلاً بررسی و نهایی شده است.');
+    }
+
+    const adminName = dto.adminName || 'مدیر مالی';
+
+    if (dto.action === 'APPROVE') {
+      const user = request.user;
+      const currentDirect = user.directDepositBalance || 0;
+      const currentBonus = user.cashbackBonusBalance || 0;
+
+      if (request.amountToman > currentDirect) {
+        throw new Error('موجودی واریزی کاربر در حال حاضر کمتر از مبلغ این درخواست است.');
+      }
+
+      const newDirect = currentDirect - request.amountToman;
+      const newTotal = newDirect + currentBonus;
+
+      // Deduct from user
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          directDepositBalance: newDirect,
+          walletBalanceToman: newTotal,
+        },
+      });
+
+      // Mark request approved
+      const updatedRequest = await this.prisma.withdrawalRequest.update({
+        where: { id },
+        data: {
+          status: 'APPROVED',
+          adminNote: dto.adminNote || null,
+          bankTrackingCode: dto.bankTrackingCode || null,
+          processedByAdminName: adminName,
+          processedAt: new Date(),
+        },
+        include: { user: true },
+      });
+
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'تایید و تسویه درخواست برداشت وجه',
+          details: `درخواست برداشت ${new Intl.NumberFormat('fa-IR').format(request.amountToman)} تومان کاربر ${user.name} توسط ${adminName} تایید و تسویه شد. پیگیری: ${dto.bankTrackingCode || 'ندارد'}.`,
+          user: adminName,
+          type: 'finance',
+        },
+      });
+
+      return updatedRequest;
+    } else {
+      // REJECT
+      const updatedRequest = await this.prisma.withdrawalRequest.update({
+        where: { id },
+        data: {
+          status: 'REJECTED',
+          adminNote: dto.adminNote || 'درخواست تسویه توسط مدیریت رد شد.',
+          processedByAdminName: adminName,
+          processedAt: new Date(),
+        },
+        include: { user: true },
+      });
+
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'رد درخواست تسویه وجه',
+          details: `درخواست برداشت ${new Intl.NumberFormat('fa-IR').format(request.amountToman)} تومان کاربر ${request.user.name} توسط ${adminName} رد شد. علت: ${dto.adminNote || 'بدون توضیح'}.`,
+          user: adminName,
+          type: 'finance',
+        },
+      });
+
+      return updatedRequest;
+    }
   }
 
   async convertPoints(id: string, points: number) {
@@ -394,5 +601,51 @@ export class UsersService {
         pointsUsed: points,
       },
     };
+  }
+
+  async bindReferral(userId: string, referralCodeInput: string) {
+    if (!referralCodeInput || !referralCodeInput.trim()) {
+      throw new BadRequestException('کد معرف نمی‌تواند خالی باشد.');
+    }
+    const cleanRef = referralCodeInput.trim().toUpperCase();
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('کاربر یافت نشد.');
+
+    if (user.referredByCode) {
+      throw new BadRequestException('شما قبلاً کد معرف ثبت کرده‌اید و هر کاربر منحصراً می‌تواند زیرمجموعه یک معرف باشد.');
+    }
+
+    if (user.referralCode && user.referralCode.toUpperCase() === cleanRef) {
+      throw new BadRequestException('نمی‌توانید از کد معرف اختصاصی خودتان استفاده کنید.');
+    }
+
+    const inviter = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { referralCode: cleanRef },
+          { id: cleanRef.replace('ARZAN-', '').toLowerCase() },
+        ],
+      },
+    });
+
+    if (!inviter || inviter.id === user.id) {
+      throw new BadRequestException('کد معرف وارد شده نامعتبر است یا کاربری با این کد یافت نشد.');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: user.id },
+      data: { referredByCode: inviter.referralCode || cleanRef },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        action: 'ثبت کد معرف برای حساب کاربری',
+        details: `کاربر ${user.name} کد معرف ${inviter.name} (${inviter.referralCode}) را به عنوان معرف خود ثبت نمود.`,
+        user: user.phone || user.name || 'User',
+        type: 'referral',
+      },
+    });
+
+    return updated;
   }
 }

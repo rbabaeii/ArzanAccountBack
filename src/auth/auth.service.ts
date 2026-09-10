@@ -3,6 +3,7 @@ import {
   BadRequestException,
   UnauthorizedException,
   Logger,
+  OnApplicationBootstrap,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
@@ -15,7 +16,7 @@ interface StoredOtp {
 }
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnApplicationBootstrap {
   private readonly logger = new Logger(AuthService.name);
   // In-memory OTP storage: phone -> { code, expiresAt }
   private otpMap = new Map<string, StoredOtp>();
@@ -25,6 +26,102 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly emailService: EmailService,
   ) {}
+
+  async onApplicationBootstrap() {
+    await this.backfillReferralCodes();
+  }
+
+  async backfillReferralCodes() {
+    try {
+      const usersWithoutRef = await this.prisma.user.findMany({
+        where: { referralCode: null },
+      });
+      for (const u of usersWithoutRef) {
+        await this.ensureUserReferralCode(u);
+      }
+      if (usersWithoutRef.length > 0) {
+        this.logger.log(`[AUTH BOOTSTRAP] Assigned referral codes to ${usersWithoutRef.length} existing users.`);
+      }
+    } catch (err: any) {
+      this.logger.warn(`Failed to backfill referral codes: ${err?.message}`);
+    }
+  }
+
+  async ensureUserReferralCode(user: any): Promise<string> {
+    if (user.referralCode) return user.referralCode;
+    const cleanId = user.id.slice(-4).toUpperCase();
+    let generated = `ARZAN-${cleanId}`;
+    const existing = await this.prisma.user.findUnique({ where: { referralCode: generated } });
+    if (existing && existing.id !== user.id) {
+      generated = `ARZAN-${cleanId}-${Math.floor(10 + Math.random() * 90)}`;
+    }
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { referralCode: generated },
+    });
+    return generated;
+  }
+
+  async bindReferralIfApplicable(user: any, referralCodeInput?: string) {
+    if (!referralCodeInput || !referralCodeInput.trim()) return;
+    const cleanRef = referralCodeInput.trim().toUpperCase();
+
+    // Already has an inviter
+    if (user.referredByCode) return;
+
+    // Cannot refer oneself
+    if (user.referralCode && user.referralCode.toUpperCase() === cleanRef) return;
+    if (user.id && cleanRef.includes(user.id.slice(-4).toUpperCase())) return;
+
+    const inviter = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { referralCode: cleanRef },
+          { id: cleanRef.replace('ARZAN-', '').toLowerCase() },
+        ],
+      },
+    });
+
+    if (inviter && inviter.id !== user.id) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { referredByCode: inviter.referralCode || cleanRef },
+      });
+
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'ثبت زیرمجموعه جدید با کد معرف',
+          details: `کاربر ${user.name || user.phone || user.email} با کد معرف ${inviter.name} (${inviter.referralCode}) به عنوان زیرمجموعه ثبت گردید.`,
+          user: user.phone || user.email || 'User',
+          type: 'referral',
+        },
+      });
+
+      this.logger.log(
+        `[REFERRAL BIND] User ${user.id} (${user.phone || user.email}) bound to inviter ${inviter.name} (${inviter.referralCode})`
+      );
+    }
+  }
+
+  formatAuthUser(user: any) {
+    return {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      status: user.status,
+      walletBalanceToman: user.walletBalanceToman || 0,
+      directDepositBalance: user.directDepositBalance || 0,
+      cashbackBonusBalance: user.cashbackBonusBalance || 0,
+      referralCode: user.referralCode || `ARZAN-${user.id.slice(-4).toUpperCase()}`,
+      referredByCode: user.referredByCode || null,
+      isTwoFactorEnabled: Boolean(user.isTwoFactorEnabled),
+      avatar: user.avatar,
+      lastLoginAt: user.lastLoginAt,
+      hasPassword: Boolean(user.password),
+    };
+  }
 
   private generateOtpCode(): string {
     return Math.floor(10000 + Math.random() * 90000).toString();
@@ -82,6 +179,7 @@ export class AuthService {
   async verifyEmailOtp(
     email: string,
     code: string,
+    referralCode?: string,
   ): Promise<{ accessToken: string; user: any }> {
     const cleanEmail = email.trim().toLowerCase();
     const cleanCode = code.trim();
@@ -114,6 +212,15 @@ export class AuthService {
       });
     }
 
+    // Ensure user has their own referralCode
+    user.referralCode = await this.ensureUserReferralCode(user);
+
+    // Bind inviter referral code if provided
+    await this.bindReferralIfApplicable(user, referralCode);
+
+    // Re-fetch user to include latest balances and referral info
+    user = await this.prisma.user.findUnique({ where: { id: user.id } });
+
     const payload = {
       sub: user.id,
       email: user.email,
@@ -125,16 +232,7 @@ export class AuthService {
 
     return {
       accessToken,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        status: user.status,
-        walletBalanceToman: user.walletBalanceToman,
-        clubPoints: user.clubPoints,
-      },
+      user: this.formatAuthUser(user),
     };
   }
 
@@ -188,6 +286,7 @@ export class AuthService {
   async verifyOtp(
     phone: string,
     code: string,
+    referralCode?: string,
   ): Promise<{ accessToken: string; user: any }> {
     const cleanPhone = phone.trim();
     const cleanCode = code.trim();
@@ -281,6 +380,15 @@ export class AuthService {
       );
     }
 
+    // Ensure user has their own referral code
+    user.referralCode = await this.ensureUserReferralCode(user);
+
+    // Bind inviter referral code if provided
+    await this.bindReferralIfApplicable(user, referralCode);
+
+    // Re-fetch user to include latest balances and referral info
+    user = await this.prisma.user.findUnique({ where: { id: user.id } });
+
     // Generate JWT token
     const payload = {
       sub: user.id,
@@ -294,25 +402,14 @@ export class AuthService {
 
     return {
       accessToken,
-      user: {
-        id: user.id,
-        name: user.name,
-        phone: user.phone,
-        email: user.email,
-        role: user.role,
-        status: user.status,
-        walletBalanceToman: user.walletBalanceToman,
-        isTwoFactorEnabled: user.isTwoFactorEnabled,
-        avatar: user.avatar,
-        lastLoginAt: user.lastLoginAt,
-        hasPassword: Boolean(user.password),
-      },
+      user: this.formatAuthUser(user),
     };
   }
 
   async loginWithPassword(
     phone: string,
     passwordRaw: string,
+    referralCode?: string,
   ): Promise<{ accessToken: string; user: any }> {
     const cleanPhone = phone.trim();
     let user = await this.prisma.user.findFirst({
@@ -376,8 +473,14 @@ export class AuthService {
       throw new UnauthorizedException('حساب کاربری شما مسدود شده است.');
     }
 
+    // Ensure referral code
+    user.referralCode = await this.ensureUserReferralCode(user);
+
+    // Bind inviter referral code if provided
+    await this.bindReferralIfApplicable(user, referralCode);
+
     // Update last login timestamp
-    await this.prisma.user.update({
+    user = await this.prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
     });
@@ -403,18 +506,7 @@ export class AuthService {
 
     return {
       accessToken,
-      user: {
-        id: user.id,
-        name: user.name,
-        phone: user.phone,
-        email: user.email,
-        role: user.role,
-        status: user.status,
-        walletBalanceToman: user.walletBalanceToman,
-        avatar: user.avatar,
-        lastLoginAt: user.lastLoginAt,
-        hasPassword: true,
-      },
+      user: this.formatAuthUser(user),
     };
   }
 
@@ -456,7 +548,7 @@ export class AuthService {
   }
 
   async getMe(userId: string): Promise<any> {
-    const user = await this.prisma.user.findUnique({
+    let user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
@@ -466,6 +558,10 @@ export class AuthService {
         role: true,
         status: true,
         walletBalanceToman: true,
+        directDepositBalance: true,
+        cashbackBonusBalance: true,
+        referralCode: true,
+        referredByCode: true,
         isTwoFactorEnabled: true,
         avatar: true,
         lastLoginAt: true,
@@ -475,6 +571,11 @@ export class AuthService {
 
     if (!user) {
       throw new UnauthorizedException('کاربر یافت نشد.');
+    }
+
+    if (!user.referralCode) {
+      const generated = await this.ensureUserReferralCode(user);
+      user.referralCode = generated;
     }
 
     return user;

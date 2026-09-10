@@ -87,16 +87,16 @@ export function renderOrderReceiptEmail(data: OrderReceiptEmailData): { html: st
     body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
     table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
     img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; }
-    body { margin: 0; padding: 0; background-color: #f1f5f9; font-family: 'Vazirmatn', Tahoma, Arial, sans-serif; }
-    .ltr { direction: ltr; text-align: left; }
+    body { margin: 0; padding: 0; background-color: #f1f5f9; font-family: 'Vazirmatn', Tahoma, Arial, sans-serif; direction: rtl !important; text-align: right !important; }
+    .ltr { direction: ltr !important; text-align: left !important; }
   </style>
 </head>
-<body style="margin: 0; padding: 24px 10px; background-color: #f1f5f9; font-family: 'Vazirmatn', Tahoma, Arial, sans-serif; color: #101d22;">
-  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+<body dir="rtl" style="margin: 0; padding: 24px 10px; background-color: #f1f5f9; font-family: 'Vazirmatn', Tahoma, Arial, sans-serif; color: #101d22; direction: rtl !important; text-align: right !important;">
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" dir="rtl" style="direction: rtl !important; text-align: right !important;">
     <tr>
       <td align="center">
         <!-- Main Email Container (600px) -->
-        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,65,83,0.06); border: 1px solid #e2edf1;">
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" dir="rtl" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,65,83,0.06); border: 1px solid #e2edf1; direction: rtl !important; text-align: right !important;">
           
           <!-- Top Gradient Accent -->
           <tr>

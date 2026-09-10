@@ -130,6 +130,70 @@ export class OrdersService {
       }
     }
 
+    // 3. Referral Cashback: Grant cashback bonus to the inviter (معرف) of the buyer
+    try {
+      const userConditions: any[] = [];
+      if (dto.customerPhone) userConditions.push({ phone: dto.customerPhone });
+      if (dto.customerEmail) userConditions.push({ email: dto.customerEmail });
+
+      if (userConditions.length > 0) {
+        const matchedUser = await this.prisma.user.findFirst({
+          where: { OR: userConditions },
+        });
+
+        // Check if this user was referred by someone (دارای کد معرف و زیرمجموعه)
+        if (matchedUser && matchedUser.referredByCode) {
+          const inviter = await this.prisma.user.findFirst({
+            where: {
+              OR: [
+                { referralCode: matchedUser.referredByCode },
+                { id: matchedUser.referredByCode },
+              ],
+            },
+          });
+
+          if (inviter && inviter.id !== matchedUser.id) {
+            const setting = await this.prisma.systemSetting.findUnique({
+              where: { key: 'ORDER_CASHBACK_PERCENT' },
+            });
+            const cashbackPercent = setting?.value ? parseInt(setting.value, 10) : 10;
+            if (cashbackPercent > 0 && dto.totalPriceToman > 0) {
+              const cashbackAmount = Math.round(Number(dto.totalPriceToman) * (cashbackPercent / 100));
+              if (cashbackAmount > 0) {
+                const prevBonus = inviter.cashbackBonusBalance || 0;
+                const prevDirect = inviter.directDepositBalance || 0;
+                const newBonus = prevBonus + cashbackAmount;
+                const newTotalWallet = prevDirect + newBonus;
+
+                await this.prisma.user.update({
+                  where: { id: inviter.id },
+                  data: {
+                    cashbackBonusBalance: newBonus,
+                    walletBalanceToman: newTotalWallet,
+                  },
+                });
+
+                await this.prisma.auditLog.create({
+                  data: {
+                    action: 'واریز پاداش دعوت از دوستان (کش‌بک زیرمجموعه)',
+                    details: `مبلغ ${new Intl.NumberFormat('fa-IR').format(cashbackAmount)} تومان پاداش کش‌بک خرید کاربر ${matchedUser.name} (سفارش #${orderNumber} با نرخ %${cashbackPercent}) به کیف پول معرف ایشان (${inviter.name}) منظور شد.`,
+                    user: inviter.name,
+                    type: 'finance',
+                  },
+                });
+
+                this.logger.log(
+                  `[REFERRAL CASHBACK] Awarded ${cashbackAmount} Toman to inviter ${inviter.name} (${inviter.id}) for purchase by ${matchedUser.name}`
+                );
+              }
+            }
+          }
+        }
+      }
+    } catch (cashbackErr) {
+      this.logger.warn(`Failed to process referral cashback: ${cashbackErr?.message}`);
+    }
+
     // Trigger non-blocking transactional email in background (never block HTTP response)
     (async () => {
       try {

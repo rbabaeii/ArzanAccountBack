@@ -45,11 +45,11 @@ export function renderOrderInvoiceEmail(data: OrderInvoiceEmailData): { html: st
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${subject}</title>
 </head>
-<body style="margin: 0; padding: 24px 10px; background-color: #f8fafc; font-family: 'Vazirmatn', Tahoma, Arial, sans-serif; color: #0f172a;">
-  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+<body dir="rtl" style="margin: 0; padding: 24px 10px; background-color: #f8fafc; font-family: 'Vazirmatn', Tahoma, Arial, sans-serif; color: #0f172a; direction: rtl !important; text-align: right !important;">
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" dir="rtl" style="direction: rtl !important; text-align: right !important;">
     <tr>
       <td align="center">
-        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 580px; background-color: #ffffff; border-radius: 14px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 16px rgba(0,0,0,0.04);">
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" dir="rtl" style="max-width: 580px; background-color: #ffffff; border-radius: 14px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 16px rgba(0,0,0,0.04); direction: rtl !important; text-align: right !important;">
           <tr>
             <td style="padding: 24px 28px; border-bottom: 1px solid #f1f5f9;">
               <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">

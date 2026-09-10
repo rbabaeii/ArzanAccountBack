@@ -140,6 +140,10 @@ model User {
   role               String    @default("USER") // SUPER_ADMIN, CATALOG_MANAGER, FINANCE_ADMIN, SUPPORT_ADMIN, USER
   status             String    @default("ACTIVE") // ACTIVE, BLOCKED, PENDING
   walletBalanceToman Int       @default(0)
+  directDepositBalance Int     @default(0) // شارژ مستقیم توسط خود کاربر (تنها مبلغ قابل تسویه)
+  cashbackBonusBalance Int     @default(0) // هدیه کش‌بک و پاداش خرید (غیرقابل برداشت نقدی)
+  referralCode       String?   @unique   // کد معرف اختصاصی کاربر
+  referredByCode     String?             // کد معرف کاربری که این شخص را دعوت کرده
   clubPoints         Int       @default(150)
   nationalCode       String?
   birthDate          String?
@@ -151,6 +155,25 @@ model User {
   lastLoginAt        DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
+  withdrawals        WithdrawalRequest[]
+}
+
+model WithdrawalRequest {
+  id                   String    @id @default(cuid())
+  userId               String
+  user                 User      @relation(fields: [userId], references: [id])
+  amountToman          Int
+  status               String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  cardNumber           String?
+  sheba                String?
+  accountOwnerName     String?
+  userNote             String?
+  adminNote            String?
+  bankTrackingCode     String?
+  processedByAdminName String?
+  processedAt          DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 }
 
 model EmailLog {
@@ -163,4 +186,5 @@ model EmailLog {
   metadata     String?
   createdAt    DateTime @default(now())
 }
+
 

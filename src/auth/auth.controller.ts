@@ -39,18 +39,18 @@ export class AuthController {
   }
 
   @Post('verify-email-otp')
-  async verifyEmailOtp(@Body() body: { email: string; code: string }) {
-    return this.authService.verifyEmailOtp(body.email, body.code);
+  async verifyEmailOtp(@Body() body: { email: string; code: string; referralCode?: string }) {
+    return this.authService.verifyEmailOtp(body.email, body.code, body.referralCode);
   }
 
   @Post('verify-otp')
   async verifyOtp(@Body() dto: VerifyOtpDto) {
-    return this.authService.verifyOtp(dto.phone, dto.code);
+    return this.authService.verifyOtp(dto.phone, dto.code, dto.referralCode);
   }
 
   @Post('login-password')
   async loginPassword(@Body() dto: LoginPasswordDto) {
-    return this.authService.loginWithPassword(dto.phone, dto.password);
+    return this.authService.loginWithPassword(dto.phone, dto.password, dto.referralCode);
   }
 
   @Post('update-password')

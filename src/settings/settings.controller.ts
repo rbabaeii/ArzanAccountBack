@@ -24,6 +24,7 @@ export class SettingsController {
     @Body('margin') margin?: number,
     @Body('maxPurchaseRatioDenominator') maxPurchaseRatioDenominator?: number,
     @Body('purchaseRatioExemptionThreshold') purchaseRatioExemptionThreshold?: number,
+    @Body('orderCashbackPercent') orderCashbackPercent?: number,
     @Body('user') user?: string,
   ) {
     const finalRate = usdToRialRate || rate;
@@ -50,6 +51,13 @@ export class SettingsController {
       await this.settingsService.updateSetting(
         'PURCHASE_RATIO_EXEMPTION_THRESHOLD',
         purchaseRatioExemptionThreshold.toString(),
+        user,
+      );
+    }
+    if (orderCashbackPercent !== undefined) {
+      await this.settingsService.updateSetting(
+        'ORDER_CASHBACK_PERCENT',
+        Math.max(0, Math.min(100, orderCashbackPercent)).toString(),
         user,
       );
     }

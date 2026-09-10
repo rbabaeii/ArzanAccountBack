@@ -101,3 +101,19 @@ export class ConvertPointsDto {
   points: number;
 }
 
+export class CreateWithdrawalDto {
+  amountToman: number;
+  cardNumber?: string;
+  sheba?: string;
+  accountOwnerName?: string;
+  userNote?: string;
+}
+
+export class ProcessWithdrawalDto {
+  action: 'APPROVE' | 'REJECT';
+  adminNote?: string;
+  bankTrackingCode?: string;
+  adminName?: string;
+}
+
+
