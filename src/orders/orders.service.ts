@@ -130,68 +130,13 @@ export class OrdersService {
       }
     }
 
-    // 3. Referral Cashback: Grant cashback bonus to the inviter (معرف) of the buyer
+    // 3. Referral Cashback: Strictly awarded ONLY when the order is confirmed completed/delivered.
     try {
-      const userConditions: any[] = [];
-      if (dto.customerPhone) userConditions.push({ phone: dto.customerPhone });
-      if (dto.customerEmail) userConditions.push({ email: dto.customerEmail });
-
-      if (userConditions.length > 0) {
-        const matchedUser = await this.prisma.user.findFirst({
-          where: { OR: userConditions },
-        });
-
-        // Check if this user was referred by someone (دارای کد معرف و زیرمجموعه)
-        if (matchedUser && matchedUser.referredByCode) {
-          const inviter = await this.prisma.user.findFirst({
-            where: {
-              OR: [
-                { referralCode: matchedUser.referredByCode },
-                { id: matchedUser.referredByCode },
-              ],
-            },
-          });
-
-          if (inviter && inviter.id !== matchedUser.id) {
-            const setting = await this.prisma.systemSetting.findUnique({
-              where: { key: 'ORDER_CASHBACK_PERCENT' },
-            });
-            const cashbackPercent = setting?.value ? parseInt(setting.value, 10) : 10;
-            if (cashbackPercent > 0 && dto.totalPriceToman > 0) {
-              const cashbackAmount = Math.round(Number(dto.totalPriceToman) * (cashbackPercent / 100));
-              if (cashbackAmount > 0) {
-                const prevBonus = inviter.cashbackBonusBalance || 0;
-                const prevDirect = inviter.directDepositBalance || 0;
-                const newBonus = prevBonus + cashbackAmount;
-                const newTotalWallet = prevDirect + newBonus;
-
-                await this.prisma.user.update({
-                  where: { id: inviter.id },
-                  data: {
-                    cashbackBonusBalance: newBonus,
-                    walletBalanceToman: newTotalWallet,
-                  },
-                });
-
-                await this.prisma.auditLog.create({
-                  data: {
-                    action: 'واریز پاداش دعوت از دوستان (کش‌بک زیرمجموعه)',
-                    details: `مبلغ ${new Intl.NumberFormat('fa-IR').format(cashbackAmount)} تومان پاداش کش‌بک خرید کاربر ${matchedUser.name} (سفارش #${orderNumber} با نرخ %${cashbackPercent}) به کیف پول معرف ایشان (${inviter.name}) منظور شد.`,
-                    user: inviter.name,
-                    type: 'finance',
-                  },
-                });
-
-                this.logger.log(
-                  `[REFERRAL CASHBACK] Awarded ${cashbackAmount} Toman to inviter ${inviter.name} (${inviter.id}) for purchase by ${matchedUser.name}`
-                );
-              }
-            }
-          }
-        }
+      if (order.status === 'completed' || order.status === 'delivered') {
+        await this.awardReferralCashbackIfEligible(order);
       }
-    } catch (cashbackErr) {
-      this.logger.warn(`Failed to process referral cashback: ${cashbackErr?.message}`);
+    } catch (cashbackErr: any) {
+      this.logger.warn(`Referral cashback check notice: ${cashbackErr?.message}`);
     }
 
     // Trigger non-blocking transactional email in background (never block HTTP response)
@@ -266,7 +211,8 @@ export class OrdersService {
     if (!order) throw new NotFoundException('سفارش یافت نشد.');
 
     const previousStatus = order.status;
-    const isNowCompleted = dto.status === 'delivered' && previousStatus !== 'delivered';
+    const isNowCompleted = (dto.status === 'completed' || dto.status === 'delivered') &&
+      previousStatus !== 'completed' && previousStatus !== 'delivered';
 
     const updated = await this.prisma.order.update({
       where: { id: order.id },
@@ -278,6 +224,16 @@ export class OrdersService {
         approvedAt: isNowCompleted ? new Date() : order.approvedAt,
       },
     });
+
+    // When status changes to completed/delivered, award referral cashback if eligible
+    if (isNowCompleted) {
+      await this.awardReferralCashbackIfEligible(updated);
+    }
+
+    // When status changes to cancelled/refunded, reverse previously awarded cashback if applicable
+    if (dto.status === 'cancelled' || dto.status === 'refunded') {
+      await this.reverseReferralCashbackIfApplicable(order);
+    }
 
     // Mode 3 Completion: Send activation completed email when admin changes status to delivered
     if (isNowCompleted && order.deliveryType === 'account_activation') {
@@ -293,7 +249,7 @@ export class OrdersService {
           targetAccountEmail: order.targetAccountEmail || undefined,
         });
         this.logger.log(`Sent activation completion email for order #${order.orderNumber}`);
-      } catch (err) {
+      } catch (err: any) {
         this.logger.warn(`Failed to send activation completed email for order #${order.orderNumber}: ${err?.message}`);
       }
     }
@@ -313,7 +269,13 @@ export class OrdersService {
 
   async requestRefund(id: string, dto: RequestRefundDto) {
     const order = await this.prisma.order.findFirst({
-      where: { OR: [{ id }, { orderNumber: id }] },
+      where: {
+        OR: [
+          { id },
+          { orderNumber: id },
+          { id: id.replace('ord-', '') },
+        ],
+      },
     });
 
     if (!order) throw new NotFoundException('سفارش یافت نشد.');
@@ -321,11 +283,23 @@ export class OrdersService {
     const updated = await this.prisma.order.update({
       where: { id: order.id },
       data: {
-        status: 'refund_requested',
+        status: 'cancelled', // تغییر وضعیت سفارش به حالت لغو / ناموفق
         refundReason: dto.refundReason,
         refundCardNumber: dto.refundCardNumber || null,
         refundIban: dto.refundIban || null,
         refundAmountToman: order.totalPriceToman,
+      },
+    });
+
+    // If referral cashback was previously awarded for this order, reverse it
+    await this.reverseReferralCashbackIfApplicable(order);
+
+    await this.prisma.auditLog.create({
+      data: {
+        action: `ثبت درخواست لغو و عودت وجه برای سفارش #${order.orderNumber}`,
+        details: `کاربر درخواست عودت وجه سفارش #${order.orderNumber} به مبلغ ${new Intl.NumberFormat('fa-IR').format(order.totalPriceToman)} تومان را به دلیل "${dto.refundReason}" ثبت نمود. وضعیت سفارش به لغو تغییر یافت و در پنل مدیریت عودت‌ها قرار گرفت.`,
+        user: order.customerEmail,
+        type: 'orders',
       },
     });
 
@@ -335,9 +309,12 @@ export class OrdersService {
   async getRefundRequests() {
     const orders = await this.prisma.order.findMany({
       where: {
-        status: {
-          in: ['refund_requested', 'refunded'],
-        },
+        OR: [
+          { status: 'refund_requested' },
+          { status: 'refunded' },
+          { status: 'cancelled' },
+          { refundReason: { not: null } },
+        ],
       },
       orderBy: { updatedAt: 'desc' },
     });
@@ -361,15 +338,18 @@ export class OrdersService {
       data: {
         status: 'refunded',
         refundAmountToman: dto.refundAmountToman,
-        refundCardNumber: dto.refundCardNumber || order.refundCardNumber,
-        refundIban: dto.refundIban || order.refundIban,
         refundTrackingCode: dto.refundTrackingCode,
         refundReceiptUrl: dto.refundReceiptUrl || null,
+        refundCardNumber: dto.refundCardNumber || order.refundCardNumber,
+        refundIban: dto.refundIban || order.refundIban,
         refundedAt: new Date(),
         refundedByAdminId: dto.adminId || null,
         refundedByAdminName: dto.adminName || 'مدیر مالی',
       },
     });
+
+    // Reverse cashback if not already done
+    await this.reverseReferralCashbackIfApplicable(order);
 
     // Send refund completion email
     try {
@@ -385,7 +365,7 @@ export class OrdersService {
         refundTrackingCode: dto.refundTrackingCode,
         refundCardNumber: dto.refundCardNumber || order.refundCardNumber || undefined,
       });
-    } catch (emailErr) {
+    } catch (emailErr: any) {
       this.logger.warn(`Failed to send refund email: ${emailErr?.message}`);
     }
 
@@ -400,5 +380,171 @@ export class OrdersService {
     });
 
     return updated;
+  }
+
+  /**
+   * Award referral cashback to inviter ONLY when order is confirmed completed/delivered.
+   */
+  async awardReferralCashbackIfEligible(order: any) {
+    try {
+      if (order.status !== 'completed' && order.status !== 'delivered') {
+        return;
+      }
+
+      // Guard against duplicate payout for the same order
+      const alreadyAwarded = await this.prisma.auditLog.findFirst({
+        where: {
+          action: 'واریز پاداش دعوت از دوستان (کش‌بک زیرمجموعه)',
+          details: { contains: `#${order.orderNumber}` },
+        },
+      });
+
+      if (alreadyAwarded) {
+        return;
+      }
+
+      const userConditions: any[] = [];
+      if (order.customerPhone) userConditions.push({ phone: order.customerPhone });
+      if (order.customerEmail) userConditions.push({ email: order.customerEmail });
+
+      if (userConditions.length === 0) return;
+
+      const matchedUser = await this.prisma.user.findFirst({
+        where: { OR: userConditions },
+      });
+
+      if (!matchedUser || !matchedUser.referredByCode) return;
+
+      const inviter = await this.prisma.user.findFirst({
+        where: {
+          OR: [
+            { referralCode: matchedUser.referredByCode },
+            { id: matchedUser.referredByCode },
+          ],
+        },
+      });
+
+      if (!inviter || inviter.id === matchedUser.id) return;
+
+      const setting = await this.prisma.systemSetting.findUnique({
+        where: { key: 'ORDER_CASHBACK_PERCENT' },
+      });
+      const cashbackPercent = setting?.value ? parseInt(setting.value, 10) : 10;
+
+      if (cashbackPercent > 0 && order.totalPriceToman > 0) {
+        const cashbackAmount = Math.round(Number(order.totalPriceToman) * (cashbackPercent / 100));
+        if (cashbackAmount > 0) {
+          const prevBonus = inviter.cashbackBonusBalance || 0;
+          const prevDirect = inviter.directDepositBalance || 0;
+          const newBonus = prevBonus + cashbackAmount;
+          const newTotalWallet = prevDirect + newBonus;
+
+          await this.prisma.user.update({
+            where: { id: inviter.id },
+            data: {
+              cashbackBonusBalance: newBonus,
+              walletBalanceToman: newTotalWallet,
+            },
+          });
+
+          await this.prisma.auditLog.create({
+            data: {
+              action: 'واریز پاداش دعوت از دوستان (کش‌بک زیرمجموعه)',
+              details: `مبلغ ${new Intl.NumberFormat('fa-IR').format(cashbackAmount)} تومان پاداش کش‌بک خرید کاربر ${matchedUser.name} (سفارش #${order.orderNumber} با نرخ %${cashbackPercent} پس از تکمیل سفارش) به کیف پول معرف ایشان (${inviter.name}) منظور شد.`,
+              user: inviter.name,
+              type: 'finance',
+            },
+          });
+
+          this.logger.log(
+            `[REFERRAL CASHBACK] Order #${order.orderNumber} completed: Awarded ${cashbackAmount} Toman to inviter ${inviter.name} (${inviter.id}) for purchase by ${matchedUser.name}`
+          );
+        }
+      }
+    } catch (cashbackErr: any) {
+      this.logger.warn(`Failed to process referral cashback for order #${order?.orderNumber}: ${cashbackErr?.message}`);
+    }
+  }
+
+  /**
+   * Reverses referral cashback bonus if an order is cancelled or refunded after payout.
+   */
+  async reverseReferralCashbackIfApplicable(order: any) {
+    try {
+      const awardLog = await this.prisma.auditLog.findFirst({
+        where: {
+          action: 'واریز پاداش دعوت از دوستان (کش‌بک زیرمجموعه)',
+          details: { contains: `#${order.orderNumber}` },
+        },
+      });
+
+      if (!awardLog) return; // Never awarded, nothing to reverse
+
+      const alreadyReversed = await this.prisma.auditLog.findFirst({
+        where: {
+          action: 'کسر پاداش دعوت از دوستان (لغو/عودت سفارش)',
+          details: { contains: `#${order.orderNumber}` },
+        },
+      });
+
+      if (alreadyReversed) return;
+
+      const userConditions: any[] = [];
+      if (order.customerPhone) userConditions.push({ phone: order.customerPhone });
+      if (order.customerEmail) userConditions.push({ email: order.customerEmail });
+
+      const matchedUser = await this.prisma.user.findFirst({
+        where: { OR: userConditions },
+      });
+
+      if (!matchedUser || !matchedUser.referredByCode) return;
+
+      const inviter = await this.prisma.user.findFirst({
+        where: {
+          OR: [
+            { referralCode: matchedUser.referredByCode },
+            { id: matchedUser.referredByCode },
+          ],
+        },
+      });
+
+      if (!inviter) return;
+
+      const setting = await this.prisma.systemSetting.findUnique({
+        where: { key: 'ORDER_CASHBACK_PERCENT' },
+      });
+      const cashbackPercent = setting?.value ? parseInt(setting.value, 10) : 10;
+      const cashbackAmount = Math.round(Number(order.totalPriceToman) * (cashbackPercent / 100));
+
+      if (cashbackAmount > 0) {
+        const prevBonus = inviter.cashbackBonusBalance || 0;
+        const prevDirect = inviter.directDepositBalance || 0;
+        const newBonus = Math.max(0, prevBonus - cashbackAmount);
+        const newTotalWallet = Math.max(0, prevDirect + newBonus);
+
+        await this.prisma.user.update({
+          where: { id: inviter.id },
+          data: {
+            cashbackBonusBalance: newBonus,
+            walletBalanceToman: newTotalWallet,
+          },
+        });
+
+        await this.prisma.auditLog.create({
+          data: {
+            action: 'کسر پاداش دعوت از دوستان (لغو/عودت سفارش)',
+            details: `مبلغ ${new Intl.NumberFormat('fa-IR').format(cashbackAmount)} تومان پاداش کش‌بک سفارش #${order.orderNumber} به دلیل لغو/عودت وجه سفارش از کیف پول معرف (${inviter.name}) کسر گردید.`,
+            user: inviter.name,
+            type: 'finance',
+          },
+        });
+
+        this.logger.log(
+          `[REFERRAL CASHBACK REVERSED] Deducted ${cashbackAmount} Toman from inviter ${inviter.name} due to cancellation of order #${order.orderNumber}`
+        );
+      }
+    } catch (err: any) {
+      this.logger.warn(`Failed to reverse referral cashback for order #${order?.orderNumber}: ${err?.message}`);
+    }
   }
 }

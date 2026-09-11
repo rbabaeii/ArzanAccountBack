@@ -65,6 +65,37 @@ export class SettingsController {
     return ApiResponse.success(updated, 'تنظیمات با موفقیت ذخیره شد.');
   }
 
+  @Put('branding')
+  async updateBranding(
+    @Body('siteLogo') siteLogo?: string,
+    @Body('siteLogoDark') siteLogoDark?: string,
+    @Body('siteFavicon') siteFavicon?: string,
+    @Body('siteName') siteName?: string,
+    @Body('siteTagline') siteTagline?: string,
+    @Body('siteDescription') siteDescription?: string,
+    @Body('sitePhone') sitePhone?: string,
+    @Body('siteEmail') siteEmail?: string,
+    @Body('supportTelegram') supportTelegram?: string,
+    @Body('siteInstagram') siteInstagram?: string,
+    @Body('siteEnamad') siteEnamad?: string,
+    @Body('user') user = 'مدیر سیستم',
+  ) {
+    if (siteLogo !== undefined) await this.settingsService.updateSetting('SITE_LOGO_URL', siteLogo, user);
+    if (siteLogoDark !== undefined) await this.settingsService.updateSetting('SITE_LOGO_DARK_URL', siteLogoDark, user);
+    if (siteFavicon !== undefined) await this.settingsService.updateSetting('SITE_FAVICON_URL', siteFavicon, user);
+    if (siteName !== undefined) await this.settingsService.updateSetting('SITE_NAME', siteName, user);
+    if (siteTagline !== undefined) await this.settingsService.updateSetting('SITE_TAGLINE', siteTagline, user);
+    if (siteDescription !== undefined) await this.settingsService.updateSetting('SITE_DESCRIPTION', siteDescription, user);
+    if (sitePhone !== undefined) await this.settingsService.updateSetting('SITE_PHONE', sitePhone, user);
+    if (siteEmail !== undefined) await this.settingsService.updateSetting('SITE_EMAIL', siteEmail, user);
+    if (supportTelegram !== undefined) await this.settingsService.updateSetting('SUPPORT_TELEGRAM', supportTelegram, user);
+    if (siteInstagram !== undefined) await this.settingsService.updateSetting('SITE_INSTAGRAM', siteInstagram, user);
+    if (siteEnamad !== undefined) await this.settingsService.updateSetting('SITE_ENAMAD_CODE', siteEnamad, user);
+
+    const updated = await this.settingsService.getAllSettings();
+    return ApiResponse.success(updated, 'تنظیمات برندینگ و مشخصات بصری سایت با موفقیت ذخیره شد.');
+  }
+
   /**
    * Manual trigger: immediately query BrsApi and update USD rate.
    */

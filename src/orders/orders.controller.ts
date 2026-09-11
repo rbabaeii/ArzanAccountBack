@@ -57,8 +57,8 @@ export class OrdersController {
     @Query('role') roleFromQuery?: string,
   ) {
     const role = this.extractUserRole(authHeader, roleFromQuery);
-    if (role !== 'SUPER_ADMIN' && role !== 'FINANCE_ADMIN') {
-      throw new ForbiddenException('فقط مدیر ارشد و مدیر مالی به بخش سفارش‌های با درخواست عودت دسترسی دارند.');
+    if (role !== 'SUPER_ADMIN' && role !== 'FINANCE_ADMIN' && role !== 'SUPPORT_ADMIN' && role !== 'ADMIN') {
+      throw new ForbiddenException('شما دسترسی لازم به بخش سفارش‌های با درخواست عودت را ندارید.');
     }
     const data = await this.ordersService.getRefundRequests();
     return ApiResponse.success(data);
