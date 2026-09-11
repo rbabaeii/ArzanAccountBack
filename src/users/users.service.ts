@@ -703,7 +703,7 @@ export class UsersService {
         orders = await this.prisma.order.findMany({
           where: {
             OR: conditions,
-            status: { notIn: ['cancelled', 'refunded'] },
+            status: { in: ['completed', 'delivered'] },
           },
           select: {
             id: true,
@@ -754,7 +754,7 @@ export class UsersService {
 
     const activeBuyers = referralsList.filter((r) => r.ordersCount > 0).length;
     const calculatedEarned = Math.round(totalSpentByReferrals * (cashbackPercent / 100));
-    const totalEarnedToman = Math.max(user.cashbackBonusBalance || 0, calculatedEarned);
+    const totalEarnedToman = calculatedEarned;
 
     return {
       referralCode,

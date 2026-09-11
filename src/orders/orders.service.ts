@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, Logger } from '@nes
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { CatalogService } from '../catalog/catalog.service';
-import { CreateOrderDto, UpdateOrderStatusDto, ProcessRefundDto, RequestRefundDto } from './orders.dto';
+import { CreateOrderDto, UpdateOrderStatusDto, ProcessRefundDto, RequestRefundDto, RejectRefundDto } from './orders.dto';
 
 @Injectable()
 export class OrdersService {
@@ -283,21 +283,22 @@ export class OrdersService {
     const updated = await this.prisma.order.update({
       where: { id: order.id },
       data: {
-        status: 'cancelled', // تغییر وضعیت سفارش به حالت لغو / ناموفق
+        status: 'refund_requested', // تغییر وضعیت سفارش به حالت درخواست عودت داده شده
         refundReason: dto.refundReason,
         refundCardNumber: dto.refundCardNumber || null,
         refundIban: dto.refundIban || null,
         refundAmountToman: order.totalPriceToman,
+        refundRejectionReason: null,
       },
     });
 
-    // If referral cashback was previously awarded for this order, reverse it
+    // If referral cashback was previously awarded for this order, reverse it while under review
     await this.reverseReferralCashbackIfApplicable(order);
 
     await this.prisma.auditLog.create({
       data: {
         action: `ثبت درخواست لغو و عودت وجه برای سفارش #${order.orderNumber}`,
-        details: `کاربر درخواست عودت وجه سفارش #${order.orderNumber} به مبلغ ${new Intl.NumberFormat('fa-IR').format(order.totalPriceToman)} تومان را به دلیل "${dto.refundReason}" ثبت نمود. وضعیت سفارش به لغو تغییر یافت و در پنل مدیریت عودت‌ها قرار گرفت.`,
+        details: `کاربر درخواست عودت وجه سفارش #${order.orderNumber} به مبلغ ${new Intl.NumberFormat('fa-IR').format(order.totalPriceToman)} تومان را به دلیل "${dto.refundReason}" ثبت نمود. وضعیت سفارش به "درخواست عودت داده شده" تغییر یافت و در پنل مدیریت عودت‌ها قرار گرفت.`,
         user: order.customerEmail,
         type: 'orders',
       },
@@ -333,15 +334,60 @@ export class OrdersService {
 
     if (!order) throw new NotFoundException('سفارش مورد نظر یافت نشد.');
 
+    const isWalletRefund = dto.refundMethod === 'wallet';
+    const trackingCode = isWalletRefund
+      ? (dto.refundTrackingCode || `WALLET-REFUND-${Date.now().toString().slice(-6)}`)
+      : (dto.refundTrackingCode || `BANK-${Date.now().toString().slice(-6)}`);
+
+    // If wallet refund, credit the customer's wallet balance directly in the database
+    if (isWalletRefund) {
+      const userConditions: any[] = [];
+      if (order.customerPhone) userConditions.push({ phone: order.customerPhone });
+      if (order.customerEmail) userConditions.push({ email: order.customerEmail });
+
+      if (userConditions.length > 0) {
+        const customer = await this.prisma.user.findFirst({
+          where: { OR: userConditions },
+        });
+
+        if (customer) {
+          const currentDirect = customer.directDepositBalance || 0;
+          const currentBonus = customer.cashbackBonusBalance || 0;
+          const newDirect = currentDirect + dto.refundAmountToman;
+          const newTotalWallet = newDirect + currentBonus;
+
+          await this.prisma.user.update({
+            where: { id: customer.id },
+            data: {
+              directDepositBalance: newDirect,
+              walletBalanceToman: newTotalWallet,
+            },
+          });
+
+          await this.prisma.auditLog.create({
+            data: {
+              action: `شارژ کیف پول خریدار بابت عودت وجه سفارش #${order.orderNumber}`,
+              details: `مبلغ ${new Intl.NumberFormat('fa-IR').format(dto.refundAmountToman)} تومان بابت عودت وجه سفارش #${order.orderNumber} مستقیماً به کیف پول کاربر ${customer.name} (${customer.phone || customer.email}) واریز گردید. موجودی جدید: ${newTotalWallet} تومان.`,
+              user: dto.adminName || 'مدیر مالی',
+              type: 'finance',
+            },
+          });
+
+          this.logger.log(`[WALLET REFUND] Credited ${dto.refundAmountToman} Toman to user ${customer.name} for order #${order.orderNumber}`);
+        }
+      }
+    }
+
     const updated = await this.prisma.order.update({
       where: { id: order.id },
       data: {
         status: 'refunded',
         refundAmountToman: dto.refundAmountToman,
-        refundTrackingCode: dto.refundTrackingCode,
+        refundTrackingCode: trackingCode,
+        refundMethod: isWalletRefund ? 'wallet' : 'bank_card',
         refundReceiptUrl: dto.refundReceiptUrl || null,
-        refundCardNumber: dto.refundCardNumber || order.refundCardNumber,
-        refundIban: dto.refundIban || order.refundIban,
+        refundCardNumber: isWalletRefund ? 'کیف پول درون سایت' : (dto.refundCardNumber || order.refundCardNumber),
+        refundIban: isWalletRefund ? null : (dto.refundIban || order.refundIban),
         refundedAt: new Date(),
         refundedByAdminId: dto.adminId || null,
         refundedByAdminName: dto.adminName || 'مدیر مالی',
@@ -362,8 +408,8 @@ export class OrdersService {
         productTitle,
         deliveryType: 'refund_completed',
         refundAmountToman: dto.refundAmountToman,
-        refundTrackingCode: dto.refundTrackingCode,
-        refundCardNumber: dto.refundCardNumber || order.refundCardNumber || undefined,
+        refundTrackingCode: trackingCode,
+        refundCardNumber: isWalletRefund ? 'کیف پول کاربری درون سایت' : (dto.refundCardNumber || order.refundCardNumber || undefined),
       });
     } catch (emailErr: any) {
       this.logger.warn(`Failed to send refund email: ${emailErr?.message}`);
@@ -371,11 +417,49 @@ export class OrdersService {
 
     await this.prisma.auditLog.create({
       data: {
-        action: `تسویه و عودت وجه سفارش #${order.orderNumber}`,
-        details: `مبلغ ${dto.refundAmountToman} تومان با کد رهگیری ${dto.refundTrackingCode} توسط ${dto.adminName || 'مدیر مالی'} عودت داده شد.`,
+        action: `تسویه و عودت وجه سفارش #${order.orderNumber} (${isWalletRefund ? 'به کیف پول سایت' : 'به حساب بانکی'})`,
+        details: `مبلغ ${dto.refundAmountToman} تومان ${isWalletRefund ? 'به کیف پول سایت کاربر' : `با کد رهگیری ${trackingCode} به حساب بانکی`} توسط ${dto.adminName || 'مدیر مالی'} عودت داده شد.`,
         adminId: dto.adminId || null,
         adminName: dto.adminName || 'مدیر مالی',
         type: 'orders_approval',
+      },
+    });
+
+    return updated;
+  }
+
+  /**
+   * Admin rejects customer's refund request and returns order to completed or original status.
+   */
+  async rejectRefund(id: string, dto: RejectRefundDto) {
+    const order = await this.prisma.order.findFirst({
+      where: { OR: [{ id }, { orderNumber: id }, { id: id.replace('ord-', '') }] },
+    });
+
+    if (!order) throw new NotFoundException('سفارش مورد نظر یافت نشد.');
+
+    const returnStatus = dto.newStatus || 'completed';
+
+    const updated = await this.prisma.order.update({
+      where: { id: order.id },
+      data: {
+        status: returnStatus,
+        refundRejectionReason: dto.rejectionReason,
+      },
+    });
+
+    // If order is back to completed/delivered, award referral cashback if eligible
+    if (returnStatus === 'completed' || returnStatus === 'delivered') {
+      await this.awardReferralCashbackIfEligible(updated);
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        action: `مخالفت با درخواست عودت وجه سفارش #${order.orderNumber}`,
+        details: `درخواست عودت وجه سفارش #${order.orderNumber} توسط ${dto.adminName || 'مدیر سیستم'} رد شد. دلیل: "${dto.rejectionReason}". وضعیت سفارش به "${returnStatus}" بازگردانده شد.`,
+        adminId: dto.adminId || null,
+        adminName: dto.adminName || 'مدیر سیستم',
+        type: 'orders',
       },
     });
 

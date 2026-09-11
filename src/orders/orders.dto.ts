@@ -99,12 +99,34 @@ export class ProcessRefundDto {
   refundIban?: string;
 
   @IsString()
-  @IsNotEmpty()
-  refundTrackingCode: string;
+  @IsOptional()
+  refundTrackingCode?: string;
+
+  @IsString()
+  @IsOptional()
+  refundMethod?: 'bank_card' | 'wallet';
 
   @IsString()
   @IsOptional()
   refundReceiptUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  adminId?: string;
+
+  @IsString()
+  @IsOptional()
+  adminName?: string;
+}
+
+export class RejectRefundDto {
+  @IsString()
+  @IsNotEmpty()
+  rejectionReason: string;
+
+  @IsString()
+  @IsOptional()
+  newStatus?: string;
 
   @IsString()
   @IsOptional()

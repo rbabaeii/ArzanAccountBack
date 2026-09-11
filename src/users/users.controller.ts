@@ -153,6 +153,7 @@ export class UsersController {
     return ApiResponse.success(updated, 'اطلاعات پروفایل کاربری با موفقیت به‌روزرسانی شد.');
   }
 
+  @Post(':id/topup')
   @Post(':id/topup-wallet')
   async topUpWallet(
     @Param('id') id: string,

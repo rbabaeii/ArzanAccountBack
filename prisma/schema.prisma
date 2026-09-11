@@ -94,6 +94,8 @@ model Order {
   refundAmountToman    Int?
   refundReceiptUrl     String?
   refundTrackingCode   String?
+  refundMethod         String?   // bank_card | wallet
+  refundRejectionReason String?
   refundedAt           DateTime?
   refundedByAdminId    String?
   refundedByAdminName  String?

@@ -11,7 +11,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { OrdersService } from './orders.service';
-import { CreateOrderDto, UpdateOrderStatusDto, ProcessRefundDto, RequestRefundDto } from './orders.dto';
+import { CreateOrderDto, UpdateOrderStatusDto, ProcessRefundDto, RequestRefundDto, RejectRefundDto } from './orders.dto';
 import { ApiResponse } from '../common/dto/api-response.dto';
 import { JwtService } from '@nestjs/jwt';
 
@@ -112,5 +112,20 @@ export class OrdersController {
     }
     const updated = await this.ordersService.processRefund(dto);
     return ApiResponse.success(updated, 'تسویه عودت وجه با موفقیت انجام شد و رسید به ایمیل مشتری ارسال گردید.');
+  }
+
+  @Post(':id/reject-refund')
+  async rejectRefund(
+    @Param('id') id: string,
+    @Body() dto: RejectRefundDto,
+    @Headers('authorization') authHeader?: string,
+    @Body('role') roleFromBody?: string,
+  ) {
+    const role = this.extractUserRole(authHeader, roleFromBody);
+    if (role !== 'SUPER_ADMIN' && role !== 'FINANCE_ADMIN' && role !== 'SUPPORT_ADMIN' && role !== 'ADMIN') {
+      throw new ForbiddenException('شما دسترسی لازم برای رد درخواست عودت وجه را ندارید.');
+    }
+    const updated = await this.ordersService.rejectRefund(id, dto);
+    return ApiResponse.success(updated, 'مخالفت با درخواست عودت وجه ثبت شد و وضعیت سفارش بازگردانده شد.');
   }
 }
