@@ -140,7 +140,7 @@ export class EmailService {
       const cleanFromEmail = (config.fromEmail || config.user).trim();
       const cleanReplyTo = (config.replyTo || cleanFromEmail).trim();
 
-      const result = await transporter.sendMail({
+      const sendPromise = transporter.sendMail({
         from: {
           name: cleanFromName,
           address: cleanFromEmail,
@@ -157,6 +157,17 @@ export class EmailService {
           'X-Auto-Response-Suppress': 'OOF, AutoReply',
           'Auto-Submitted': 'auto-generated',
         },
+      });
+
+      let timer: any;
+      const timeoutPromise = new Promise<any>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error('اتصال به سرور ایمیل (SMTP) تایم‌اوت شد (مهلت ۸ ثانیه).'));
+        }, 8000);
+      });
+
+      const result = await Promise.race([sendPromise, timeoutPromise]).finally(() => {
+        if (timer) clearTimeout(timer);
       });
 
       this.logger.log(`Email [${options.templateName}] sent successfully to ${options.to}. MessageId: ${result.messageId}`);

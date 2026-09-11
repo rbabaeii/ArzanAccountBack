@@ -20,6 +20,8 @@ export interface OrderDeliveryEmailData {
   refundAmountToman?: number;
   refundTrackingCode?: string;
   refundCardNumber?: string;
+  refundMethod?: 'bank_card' | 'wallet';
+  refundReceiptUrl?: string;
   siteUrl?: string;
 }
 
@@ -43,70 +45,71 @@ export function renderOrderDeliveryEmail(data: OrderDeliveryEmailData): { html: 
           ${name} عزیز، سفارش شما برای محصول <strong>${data.productTitle}</strong> با موفقیت تکمیل شد.
         </p>
         <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 20px; margin: 20px 0; text-align: center;">
-          <span style="font-size: 12px; color: #166534; font-weight: 600; display: block; margin-bottom: 8px;">لینک فعال‌سازی اختصاصی شما:</span>
-          <a href="${data.activationLink || siteUrl}" style="background: #0d9488; color: #ffffff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 13px; display: inline-block;">
-            ورود به لینک فعال‌سازی
+          <p style="font-size: 13px; color: #166534; margin-bottom: 12px;">روی دکمه زیر کلیک کنید تا وارد فرایند دریافت و فعال‌سازی اکانت خود شوید:</p>
+          <a href="${data.activationLink || siteUrl}" style="background: #0d9488; color: #ffffff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">
+            ورود به صفحه فعال‌سازی اشتراک
           </a>
-          <p style="font-size: 11px; color: #475569; margin-top: 12px; word-break: break-all; font-family: monospace;">
-            ${data.activationLink || siteUrl}
-          </p>
         </div>
       `;
       bodyContentText = `سفارش ${data.orderNumber} تکمیل شد.\nمحصول: ${data.productTitle}\nلینک فعال‌سازی: ${data.activationLink || siteUrl}`;
       break;
 
     case 'credentials':
-      subject = `مشخصات اکانت سفارش ${data.orderNumber} - ${data.productTitle}`;
-      badgeTitle = 'مشخصات اکانت تحویل داده شد';
-      badgeColor = '#0284c7';
-      const creds = (data.accountCredentials || []).map(c => `<li style="margin-bottom: 6px; font-family: monospace; font-size: 13px;">${c}</li>`).join('');
+      subject = `اطلاعات و لایسنس سفارش ${data.orderNumber} - ${data.productTitle}`;
+      badgeTitle = 'سفارش تحویل داده شد';
+      badgeColor = '#0d9488';
+      const accountsList = (data.accountCredentials || [])
+        .map((acc, i) => `<div style="font-family: monospace; background: #f8fafc; padding: 10px; border-radius: 6px; margin: 6px 0; border: 1px dashed #cbd5e1; direction: ltr; text-align: left;">${acc}</div>`)
+        .join('');
+
       bodyContentHtml = `
         <p style="font-size: 14px; line-height: 1.8; color: #334155;">
-          ${name} عزیز، اطلاعات حساب کاربری محصول <strong>${data.productTitle}</strong> برای شما صادر شد:
+          ${name} عزیز، اطلاعات دسترسی و لایسنس‌های سفارش شما به شرح زیر صادر گردید:
         </p>
-        <div style="background: #f8fafc; border: 1px dashed #0284c7; border-radius: 12px; padding: 18px; margin: 20px 0;">
-          <ul style="padding-right: 20px; margin: 0; color: #0f172a;">
-            ${creds || '<li>اطلاعات ورود در پنل کاربری ثبت شده است.</li>'}
-          </ul>
+        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin: 16px 0;">
+          <strong style="font-size: 13px; color: #0f172a;">لایسنس‌ها و اطلاعات اکانت:</strong>
+          ${accountsList || '<p style="color: #64748b;">اطلاعاتی یافت نشد.</p>'}
         </div>
         <p style="font-size: 12px; color: #64748b;">
-          جهت حفظ امنیت، توصیه می‌شود در صورت امکان پس از اولین ورود نسبت به تغییر رمز عبور اقدام فرمایید.
+          لطفاً اطلاعات فوق را در محلی امن نگهداری فرمایید.
         </p>
       `;
-      bodyContentText = `سفارش ${data.orderNumber} تحویل شد.\nمحصول: ${data.productTitle}\nمشخصات: ${(data.accountCredentials || []).join(' | ')}`;
+      bodyContentText = `سفارش ${data.orderNumber} تحویل شد.\nمحصول: ${data.productTitle}\nلایسنس‌ها:\n${(data.accountCredentials || []).join('\n')}`;
       break;
 
     case 'pending_activation':
-      subject = `ثبت سفارش ${data.orderNumber} - در صف فعال‌سازی کارشناسان`;
-      badgeTitle = 'در انتظار فعال‌سازی روی اکانت شما';
+      subject = `سفارش ${data.orderNumber} در صف فعال‌سازی کارشناسان`;
+      badgeTitle = 'در حال انجام توسط کارشناس';
       badgeColor = '#d97706';
       bodyContentHtml = `
         <p style="font-size: 14px; line-height: 1.8; color: #334155;">
-          ${name} عزیز، سفارش شما با موفقیت ثبت شد و اطلاعات اکانت شما جهت فعال‌سازی بر روی محصول <strong>${data.productTitle}</strong> در صف کارشناسان پشتیبانی قرار گرفت.
+          ${name} عزیز، سفارش شما برای <strong>${data.productTitle}</strong> با موفقیت ثبت شد و هم‌اکنون توسط کارشناسان ارزان اکانت در صف پردازش و فعال‌سازی اختصاصی قرار دارد.
         </p>
-        <div style="background: #fffbeb; border: 1px solid #fef3c7; border-radius: 12px; padding: 18px; margin: 20px 0;">
-          <span style="font-size: 12px; color: #92400e; font-weight: bold; display: block; margin-bottom: 6px;">حساب هدف جهت فعال‌سازی:</span>
-          <span style="font-family: monospace; font-size: 13px; color: #78350f;">${data.targetAccountEmail || 'ثبت شده در سفارش'}</span>
+        ${data.targetAccountEmail ? `
+        <div style="background: #fefce8; border: 1px solid #fef08a; border-radius: 12px; padding: 14px; margin: 16px 0;">
+          <span style="font-size: 13px; color: #854d0e;">ایمیل اکانت جهت فعال‌سازی:</span>
+          <strong style="font-family: monospace; display: block; margin-top: 4px;">${data.targetAccountEmail}</strong>
         </div>
-        <p style="font-size: 12px; line-height: 1.7; color: #64748b;">
-          کارشناسان ما به زودی فعال‌سازی را روی اکانت شما انجام خواهند داد و به محض تکمیل، ایمیل تایید نهایی برای شما ارسال خواهد شد.
+        ` : ''}
+        <p style="font-size: 12px; color: #64748b;">
+          به محض انجام فعال‌سازی، ایمیل تکمیل و تایید نهایی برای شما ارسال خواهد شد.
         </p>
       `;
-      bodyContentText = `سفارش ${data.orderNumber} با موفقیت ثبت شد.\nمحصول: ${data.productTitle}\nاکانت هدف: ${data.targetAccountEmail}\nوضعیت: در صف فعال‌سازی کارشناسان`;
+      bodyContentText = `سفارش ${data.orderNumber} در حال انجام است.\nمحصول: ${data.productTitle}\nاکانت: ${data.targetAccountEmail || '-'}`;
       break;
 
     case 'activation_completed':
-      subject = `اشتراک شما با موفقیت فعال شد - سفارش ${data.orderNumber}`;
-      badgeTitle = 'فعال‌سازی تکمیل شد';
+      subject = `فعال‌سازی سفارش ${data.orderNumber} با موفقیت انجام شد`;
+      badgeTitle = 'اکانت شما با موفقیت فعال شد';
       badgeColor = '#059669';
       bodyContentHtml = `
         <p style="font-size: 14px; line-height: 1.8; color: #334155;">
-          ${name} عزیز، با خوشحالی به اطلاع می‌رسانیم که اشتراک محصول <strong>${data.productTitle}</strong> با موفقیت بر روی اکانت شما فعال گردید!
+          ${name} عزیز، اشتراک سفارش <strong>${data.productTitle}</strong> بر روی اکانت شما با موفقیت فعال گردید.
         </p>
-        <div style="background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 12px; padding: 18px; margin: 20px 0; text-align: center;">
-          <span style="font-size: 14px; color: #065f46; font-weight: bold; display: block;">
-            اکانت شما هم‌اکنون فعال و آماده استفاده است.
-          </span>
+        <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 16px; margin: 16px 0;">
+          <p style="font-size: 13px; color: #166534; margin: 0;">
+            هم‌اکنون می‌توانید وارد برنامه/اکانت خود شده و از تمامی امکانات نسخه پریمیوم بدون محدودیت لذت ببرید.
+          </p>
         </div>
         <p style="font-size: 12px; color: #64748b;">
           در صورت بروز هرگونه سوال یا نیاز به پشتیبانی، از طریق تیکت یا پشتیبانی تلگرام در کنار شما هستیم.
@@ -116,22 +119,53 @@ export function renderOrderDeliveryEmail(data: OrderDeliveryEmailData): { html: 
       break;
 
     case 'refund_completed':
-      subject = `تسویه و عودت وجه سفارش ${data.orderNumber}`;
-      badgeTitle = 'عودت وجه انجام شد';
-      badgeColor = '#4f46e5';
-      bodyContentHtml = `
-        <p style="font-size: 14px; line-height: 1.8; color: #334155;">
-          ${name} عزیز، مبلغ سفارش <strong>${data.orderNumber}</strong> با موفقیت به حساب بانکی شما عودت داده شد.
-        </p>
-        <div style="background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 12px; padding: 18px; margin: 20px 0;">
-          <div style="font-size: 13px; color: #312e81; margin-bottom: 6px;">
-            <strong>مبلغ عودت:</strong> ${data.refundAmountToman ? Number(data.refundAmountToman).toLocaleString('en-US') + ' تومان' : '-'}
+      const isWallet = data.refundMethod === 'wallet' || (data.refundCardNumber && data.refundCardNumber.includes('کیف پول'));
+      subject = isWallet
+        ? `شارژ کیف پول و عودت وجه سفارش #${data.orderNumber} - ارزان اکانت`
+        : `تسویه و عودت وجه سفارش #${data.orderNumber} - ارزان اکانت`;
+      badgeTitle = isWallet ? 'شارژ کیف پول (عودت وجه)' : 'تسویه و عودت وجه بانکی';
+      badgeColor = isWallet ? '#0d9488' : '#059669';
+
+      const amountFormatted = data.refundAmountToman ? Number(data.refundAmountToman).toLocaleString('fa-IR') + ' تومان' : '-';
+
+      bodyContentHtml = isWallet
+        ? `
+          <p style="font-size: 14px; line-height: 1.9; color: #334155; margin-bottom: 16px;">
+            ${name} عزیز، درخواست عودت وجه سفارش <strong>#${data.orderNumber}</strong> تایید و مبلغ مربوطه بلافاصله به <strong>کیف پول حساب کاربری شما</strong> در وب‌سایت ارزان اکانت واریز گردید.
+          </p>
+          <div style="background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 14px; padding: 18px; margin: 20px 0;">
+            <div style="font-size: 13px; color: #115e59; margin-bottom: 8px;">
+              <strong>مبلغ شارژ شده:</strong> ${amountFormatted}
+            </div>
+            <div style="font-size: 13px; color: #115e59; margin-bottom: 8px;">
+              <strong>روش عودت:</strong> شارژ آنی کیف پول سایت (اعتبار کاربری)
+            </div>
+            ${data.refundTrackingCode ? `<div style="font-size: 13px; color: #115e59;"><strong>شناسه ارجاع / پیگیری:</strong> <span style="font-family: monospace;">${data.refundTrackingCode}</span></div>` : ''}
           </div>
-          ${data.refundCardNumber ? `<div style="font-size: 13px; color: #312e81; margin-bottom: 6px;"><strong>شماره کارت مقصد:</strong> <span style="font-family: monospace;">${data.refundCardNumber}</span></div>` : ''}
-          ${data.refundTrackingCode ? `<div style="font-size: 13px; color: #312e81;"><strong>کد رهگیری بانکی:</strong> <span style="font-family: monospace;">${data.refundTrackingCode}</span></div>` : ''}
-        </div>
-      `;
-      bodyContentText = `سفارش ${data.orderNumber} عودت داده شد.\nمبلغ: ${data.refundAmountToman} تومان\nکد رهگیری: ${data.refundTrackingCode}`;
+          <p style="font-size: 12px; color: #64748b; line-height: 1.8;">
+            شما هم‌اکنون می‌توانید با مراجعه به پنل کاربری خود، از این موجودی جهت خرید هر یک از محصولات و اشتراک‌های دیجیتال بدون نیاز به پرداخت مجدد استفاده نمایید.
+          </p>
+        `
+        : `
+          <p style="font-size: 14px; line-height: 1.9; color: #334155; margin-bottom: 16px;">
+            ${name} عزیز، درخواست عودت وجه سفارش <strong>#${data.orderNumber}</strong> با موفقیت توسط بخش مالی تسویه و وجه به حساب بانکی شما واریز گردید.
+          </p>
+          <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 14px; padding: 18px; margin: 20px 0;">
+            <div style="font-size: 13px; color: #166534; margin-bottom: 8px;">
+              <strong>مبلغ واریز شده:</strong> ${amountFormatted}
+            </div>
+            ${data.refundCardNumber ? `<div style="font-size: 13px; color: #166534; margin-bottom: 8px;"><strong>شماره کارت / شبا مقصد:</strong> <span style="font-family: monospace; direction: ltr; display: inline-block;">${data.refundCardNumber}</span></div>` : ''}
+            ${data.refundTrackingCode ? `<div style="font-size: 13px; color: #166534; margin-bottom: 8px;"><strong>کد رهگیری بانکی / شماره سند:</strong> <span style="font-family: monospace; direction: ltr; display: inline-block;">${data.refundTrackingCode}</span></div>` : ''}
+            ${data.refundReceiptUrl ? `<div style="font-size: 12px; margin-top: 10px;"><a href="${data.refundReceiptUrl}" target="_blank" style="color: #059669; font-weight: bold; text-decoration: underline;">مشاهده تصویر فیش واریزی</a></div>` : ''}
+          </div>
+          <p style="font-size: 12px; color: #64748b; line-height: 1.8;">
+            بسته به چرخه پایا و ساتنا و بانک مقصد، ممکن است واریز در گردش حساب شما ظاهر شود.
+          </p>
+        `;
+
+      bodyContentText = isWallet
+        ? `سفارش #${data.orderNumber} به کیف پول عودت داده شد.\nمبلغ: ${data.refundAmountToman} تومان\nشناسه: ${data.refundTrackingCode}`
+        : `سفارش #${data.orderNumber} به حساب بانکی عودت داده شد.\nمبلغ: ${data.refundAmountToman} تومان\nکد رهگیری: ${data.refundTrackingCode}`;
       break;
   }
 

@@ -77,6 +77,13 @@ export class UpdateOrderStatusDto {
   @IsOptional()
   adminPhone?: string;
 
+  @IsOptional()
+  deliveredAccounts?: any;
+
+  @IsString()
+  @IsOptional()
+  customerEmail?: string;
+
   @IsString()
   @IsOptional()
   notes?: string;
@@ -109,6 +116,10 @@ export class ProcessRefundDto {
   @IsString()
   @IsOptional()
   refundReceiptUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  customerEmail?: string;
 
   @IsString()
   @IsOptional()

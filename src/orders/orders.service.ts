@@ -218,6 +218,13 @@ export class OrdersService {
       where: { id: order.id },
       data: {
         status: dto.status,
+        ...(dto.deliveredAccounts !== undefined
+          ? {
+              deliveredAccounts: Array.isArray(dto.deliveredAccounts)
+                ? JSON.stringify(dto.deliveredAccounts)
+                : String(dto.deliveredAccounts),
+            }
+          : {}),
         approvedByAdminId: dto.adminId || null,
         approvedByAdminName: dto.adminName || 'مدیر سیستم',
         approvedByAdminPhone: dto.adminPhone || null,
@@ -235,23 +242,65 @@ export class OrdersService {
       await this.reverseReferralCashbackIfApplicable(order);
     }
 
-    // Mode 3 Completion: Send activation completed email when admin changes status to delivered
-    if (isNowCompleted && order.deliveryType === 'account_activation') {
-      try {
-        const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
-        const productTitle = items?.[0]?.productTitle || 'اشتراک دیجیتال';
+    // When status changes to refunded, send refund email automatically (background non-blocking)
+    if (dto.status === 'refunded' && previousStatus !== 'refunded') {
+      const sendRefundEmailAsync = async () => {
+        try {
+          const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
+          const productTitle = items?.[0]?.productTitle || 'سفارش دیجیتال';
 
-        await this.emailService.sendDeliveryEmail({
-          orderNumber: order.orderNumber,
-          customerEmail: order.customerEmail,
-          productTitle,
-          deliveryType: 'activation_completed',
-          targetAccountEmail: order.targetAccountEmail || undefined,
-        });
-        this.logger.log(`Sent activation completion email for order #${order.orderNumber}`);
-      } catch (err: any) {
-        this.logger.warn(`Failed to send activation completed email for order #${order.orderNumber}: ${err?.message}`);
-      }
+          let targetEmail = dto.customerEmail || order.customerEmail;
+          if (!targetEmail || !targetEmail.includes('@')) {
+            if (order.customerPhone) {
+              const u = await this.prisma.user.findFirst({ where: { phone: order.customerPhone } });
+              if (u?.email && u.email.includes('@')) targetEmail = u.email;
+            }
+          }
+
+          if (targetEmail && targetEmail.includes('@')) {
+            const isWallet = order.refundMethod === 'wallet';
+            const trackingCode = order.refundTrackingCode || (isWallet ? `WALLET-${Date.now().toString().slice(-6)}` : `BANK-${Date.now().toString().slice(-6)}`);
+            await this.emailService.sendDeliveryEmail({
+              orderNumber: order.orderNumber,
+              customerEmail: targetEmail,
+              customerName: targetEmail.split('@')[0],
+              productTitle,
+              deliveryType: 'refund_completed',
+              refundAmountToman: order.refundAmountToman || order.totalPriceToman,
+              refundTrackingCode: trackingCode,
+              refundMethod: (order.refundMethod as any) || 'bank_card',
+              refundCardNumber: isWallet ? 'کیف پول کاربری درون سایت' : (order.refundCardNumber || undefined),
+              refundReceiptUrl: order.refundReceiptUrl || undefined,
+            });
+            this.logger.log(`Automatic refund notification email sent to ${targetEmail} for order #${order.orderNumber}`);
+          }
+        } catch (err: any) {
+          this.logger.warn(`Failed to send automated refund email for order #${order.orderNumber}: ${err?.message}`);
+        }
+      };
+      sendRefundEmailAsync().catch((e) => this.logger.warn(`Async refund email error: ${e?.message}`));
+    }
+
+    // Mode 3 Completion: Send activation completed email when admin changes status to delivered (background non-blocking)
+    if (isNowCompleted && order.deliveryType === 'account_activation') {
+      const sendActivationEmailAsync = async () => {
+        try {
+          const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
+          const productTitle = items?.[0]?.productTitle || 'اشتراک دیجیتال';
+
+          await this.emailService.sendDeliveryEmail({
+            orderNumber: order.orderNumber,
+            customerEmail: order.customerEmail,
+            productTitle,
+            deliveryType: 'activation_completed',
+            targetAccountEmail: order.targetAccountEmail || undefined,
+          });
+          this.logger.log(`Sent activation completion email for order #${order.orderNumber}`);
+        } catch (err: any) {
+          this.logger.warn(`Failed to send activation completed email for order #${order.orderNumber}: ${err?.message}`);
+        }
+      };
+      sendActivationEmailAsync().catch((e) => this.logger.warn(`Async activation email error: ${e?.message}`));
     }
 
     await this.prisma.auditLog.create({
@@ -397,23 +446,42 @@ export class OrdersService {
     // Reverse cashback if not already done
     await this.reverseReferralCashbackIfApplicable(order);
 
-    // Send refund completion email
-    try {
-      const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
-      const productTitle = items?.[0]?.productTitle || 'سفارش دیجیتال';
+    // Send refund completion email in background (non-blocking)
+    const sendRefundEmailAsync = async () => {
+      try {
+        const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
+        const productTitle = items?.[0]?.productTitle || 'سفارش دیجیتال';
 
-      await this.emailService.sendDeliveryEmail({
-        orderNumber: order.orderNumber,
-        customerEmail: order.customerEmail,
-        productTitle,
-        deliveryType: 'refund_completed',
-        refundAmountToman: dto.refundAmountToman,
-        refundTrackingCode: trackingCode,
-        refundCardNumber: isWalletRefund ? 'کیف پول کاربری درون سایت' : (dto.refundCardNumber || order.refundCardNumber || undefined),
-      });
-    } catch (emailErr: any) {
-      this.logger.warn(`Failed to send refund email: ${emailErr?.message}`);
-    }
+        let targetEmail = dto.customerEmail || order.customerEmail;
+        if (!targetEmail || !targetEmail.includes('@')) {
+          if (order.customerPhone) {
+            const u = await this.prisma.user.findFirst({ where: { phone: order.customerPhone } });
+            if (u?.email && u.email.includes('@')) targetEmail = u.email;
+          }
+        }
+
+        if (targetEmail && targetEmail.includes('@')) {
+          await this.emailService.sendDeliveryEmail({
+            orderNumber: order.orderNumber,
+            customerEmail: targetEmail,
+            customerName: targetEmail.split('@')[0],
+            productTitle,
+            deliveryType: 'refund_completed',
+            refundAmountToman: dto.refundAmountToman,
+            refundTrackingCode: trackingCode,
+            refundMethod: isWalletRefund ? 'wallet' : 'bank_card',
+            refundCardNumber: isWalletRefund ? 'کیف پول کاربری درون سایت' : (dto.refundCardNumber || order.refundCardNumber || undefined),
+            refundReceiptUrl: dto.refundReceiptUrl || undefined,
+          });
+          this.logger.log(`[REFUND EMAIL] Refund confirmation email dispatched to ${targetEmail} for order #${order.orderNumber}`);
+        } else {
+          this.logger.warn(`[REFUND EMAIL] No valid email found for customer of order #${order.orderNumber}. Email notification skipped.`);
+        }
+      } catch (emailErr: any) {
+        this.logger.warn(`Failed to send refund email: ${emailErr?.message}`);
+      }
+    };
+    sendRefundEmailAsync().catch((err) => this.logger.warn(`Async processRefund email error: ${err?.message}`));
 
     await this.prisma.auditLog.create({
       data: {
