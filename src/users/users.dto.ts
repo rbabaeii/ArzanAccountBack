@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEmail, IsBoolean, IsIn } from 'class-validator';
+import { IsString, IsOptional, IsEmail, IsBoolean, IsIn, IsNumber } from 'class-validator';
 
 export class CreateUserDto {
   @IsString()
@@ -94,26 +94,60 @@ export class UpdateProfileDto {
 }
 
 export class TopUpWalletDto {
+  @IsNumber()
   amountToman: number;
 }
 
 export class ConvertPointsDto {
+  @IsNumber()
   points: number;
 }
 
 export class CreateWithdrawalDto {
+  @IsNumber()
   amountToman: number;
+
+  @IsOptional()
+  @IsString()
   cardNumber?: string;
+
+  @IsOptional()
+  @IsString()
   sheba?: string;
+
+  @IsOptional()
+  @IsString()
   accountOwnerName?: string;
+
+  @IsOptional()
+  @IsString()
   userNote?: string;
 }
 
 export class ProcessWithdrawalDto {
+  @IsString()
+  @IsIn(['APPROVE', 'REJECT'])
   action: 'APPROVE' | 'REJECT';
+
+  @IsOptional()
+  @IsString()
   adminNote?: string;
+
+  @IsOptional()
+  @IsString()
   bankTrackingCode?: string;
+
+  @IsOptional()
+  @IsString()
+  bankReceiptUrl?: string;
+
+  @IsOptional()
+  @IsString()
   adminName?: string;
+
+  @IsOptional()
+  @IsString()
+  adminId?: string;
 }
 
 

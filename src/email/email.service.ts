@@ -297,6 +297,126 @@ export class EmailService {
   }
 
   /**
+   * Send Account Withdrawal Status Notification (Approved or Rejected)
+   */
+  async sendWithdrawalStatusEmail(data: {
+    recipientEmail: string;
+    customerName: string;
+    amountToman: number;
+    status: 'APPROVED' | 'REJECTED';
+    bankName?: string;
+    destination?: string;
+    bankTrackingCode?: string;
+    bankReceiptUrl?: string;
+    rejectionReason?: string;
+    siteUrl?: string;
+  }) {
+    const isApproved = data.status === 'APPROVED';
+    const amountFormatted = `${new Intl.NumberFormat('fa-IR').format(data.amountToman)} تومان`;
+    const title = isApproved ? 'واریز وجه تسویه حساب بانکی' : 'عدم تایید درخواست تسویه حساب';
+    const subject = isApproved
+      ? `تایید و واریز تسویه حساب ${amountFormatted} - ارزان اکانت`
+      : `عدم تایید درخواست تسویه حساب ${amountFormatted} - ارزان اکانت`;
+
+    const html = `
+<!DOCTYPE html>
+<html dir="rtl" lang="fa">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${subject}</title>
+</head>
+<body dir="rtl" style="margin: 0; padding: 24px 10px; background-color: #f1f5f9; font-family: 'Vazirmatn', Tahoma, Arial, sans-serif; color: #0f172a; direction: rtl !important; text-align: right !important;">
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" dir="rtl" style="direction: rtl !important; text-align: right !important;">
+    <tr>
+      <td align="center">
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" dir="rtl" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,65,83,0.08); border: 1px solid #e2edf1; direction: rtl !important; text-align: right !important;">
+          <tr>
+            <td style="background-color: ${isApproved ? '#059669' : '#e11d48'}; padding: 26px 30px; text-align: center; color: #ffffff;">
+              <h2 style="margin: 0; font-size: 22px; font-weight: 800;">
+                ${isApproved ? '✅ تسویه حساب با موفقیت انجام شد' : '❌ درخواست تسویه حساب رد شد'}
+              </h2>
+              <div style="font-size: 13px; color: #ffffff; opacity: 0.9; margin-top: 6px;">
+                ارزان اکانت - واحد مالی و حسابداری
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 30px 32px;">
+              <p style="font-size: 14px; line-height: 1.8; color: #334155; margin-top: 0;">
+                کاربر گرامی <strong>${data.customerName || 'همراه ارزان اکانت'}</strong>،
+              </p>
+              ${isApproved ? `
+                <p style="font-size: 14px; line-height: 1.8; color: #334155;">
+                  درخواست تسویه حساب شما به مبلغ <strong>${amountFormatted}</strong> با موفقیت توسط واحد مالی تایید و از طریق سیکل پایا / ساتنا به حساب بانکی شما واریز گردید.
+                </p>
+                <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 16px; margin: 20px 0;">
+                  <div style="font-size: 13px; color: #166534; margin-bottom: 8px;">
+                    <strong>مبلغ واریز شده:</strong> ${amountFormatted}
+                  </div>
+                  ${data.bankName ? `<div style="font-size: 13px; color: #166534; margin-bottom: 8px;"><strong>بانک مقصد:</strong> ${data.bankName}</div>` : ''}
+                  ${data.destination ? `<div style="font-size: 13px; color: #166534; margin-bottom: 8px;"><strong>مقصد واریز:</strong> <span style="font-family: monospace; direction: ltr; display: inline-block;">${data.destination}</span></div>` : ''}
+                  ${data.bankTrackingCode ? `<div style="font-size: 13px; color: #166534; margin-bottom: 8px;"><strong>کد رهگیری بانکی / شماره سند:</strong> <span style="font-family: monospace; direction: ltr; display: inline-block;">${data.bankTrackingCode}</span></div>` : ''}
+                  ${data.bankReceiptUrl ? `<div style="font-size: 12px; margin-top: 10px;"><a href="${data.bankReceiptUrl}" target="_blank" style="color: #059669; font-weight: bold; text-decoration: underline;">مشاهده تصویر فیش واریزی</a></div>` : ''}
+                </div>
+                <p style="font-size: 12px; color: #64748b; line-height: 1.8;">
+                  نکته: با توجه به چرخه‌های زمان‌بندی شبکه پایا و ساتنا بانک مرکزی، ثبت مبلغ در گردش حساب شما ممکن است چند ساعت زمان ببرد.
+                </p>
+              ` : `
+                <p style="font-size: 14px; line-height: 1.8; color: #334155;">
+                  درخواست تسویه حساب شما به مبلغ <strong>${amountFormatted}</strong> توسط واحد مالی مورد تایید قرار نگرفت.
+                </p>
+                <div style="background: #fff1f2; border: 1px solid #fecdd3; border-radius: 12px; padding: 16px; margin: 20px 0;">
+                  <div style="font-size: 13px; color: #9f1239; margin-bottom: 8px;">
+                    <strong>دلیل رد درخواست:</strong> ${data.rejectionReason || 'عدم تطابق اطلاعات بانکی یا نقض قوانین تسویه حساب'}
+                  </div>
+                  <div style="font-size: 12px; color: #9f1239; margin-top: 6px;">
+                    ℹ️ کل مبلغ ${amountFormatted} مجدداً و به صورت آنی به موجودی کیف پول شما بازگردانده شد.
+                  </div>
+                </div>
+                <p style="font-size: 12px; color: #64748b; line-height: 1.8;">
+                  جهت پیگیری بیشتر می‌توانید با پشتیبانی تلگرام تماس حاصل نموده یا پس از اصلاح مشخصات بانکی، مجدداً درخواست تسویه ثبت فرمایید.
+                </p>
+              `}
+              <div style="text-align: center; margin-top: 24px;">
+                <a href="${data.siteUrl || 'https://arzanaccount.com'}/profile" style="display: inline-block; background-color: #005a71; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 10px; font-size: 13px; font-weight: bold;">
+                  مشاهده پروفایل و کیف پول ←
+                </a>
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+    `;
+
+    const text = `
+${title} - ارزان اکانت
+--------------------------------------------------
+کاربر گرامی ${data.customerName || ''}
+مبلغ: ${data.amountToman} تومان
+وضعیت: ${isApproved ? 'واریز شد' : 'رد شد'}
+${isApproved ? `کد رهگیری: ${data.bankTrackingCode || '-'}` : `علت: ${data.rejectionReason || '-'}\nمبلغ به کیف پول بازگردانده شد.`}
+    `.trim();
+
+    return this.executeSend({
+      to: data.recipientEmail,
+      subject,
+      html,
+      text,
+      templateName: isApproved ? 'withdrawal_approved' : 'withdrawal_rejected',
+      metadata: {
+        amountToman: data.amountToman,
+        status: data.status,
+        bankTrackingCode: data.bankTrackingCode,
+      },
+    });
+  }
+
+  /**
    * Send Diagnostic Test Email
    */
   async sendTestEmail(to: string, templateType = 'test') {

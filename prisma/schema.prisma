@@ -168,11 +168,14 @@ model WithdrawalRequest {
   status               String    @default("PENDING") // PENDING, APPROVED, REJECTED
   cardNumber           String?
   sheba                String?
+  bankName             String?
   accountOwnerName     String?
   userNote             String?
   adminNote            String?
   bankTrackingCode     String?
+  bankReceiptUrl       String?
   processedByAdminName String?
+  processedByAdminId   String?
   processedAt          DateTime?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt

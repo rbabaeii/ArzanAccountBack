@@ -1,10 +1,22 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateUserDto, UpdateUserRoleDto, UpdateUserStatusDto, UpdateProfileDto } from './users.dto';
+import { EmailService } from '../email/email.service';
+import {
+  validateIranianCardNumber,
+  validateIranianSheba,
+  formatCardNumber,
+  formatSheba,
+} from '../common/utils/iranian-banks';
+import { CreateUserDto, UpdateUserRoleDto, UpdateUserStatusDto, UpdateProfileDto, CreateWithdrawalDto, ProcessWithdrawalDto } from './users.dto';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(UsersService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly emailService: EmailService,
+  ) {}
 
   async getUsers(params?: {
     role?: string;
@@ -363,65 +375,140 @@ export class UsersService {
 
   /**
    * User submits a withdrawal request.
-   * Can ONLY withdraw up to directDepositBalance (cashback is non-withdrawable).
+   * Enforces:
+   * 1. Active User Status Guard
+   * 2. Pending Requests Throttle (max 1 active pending request)
+   * 3. Amount Boundaries (Min 50,000 Toman, Max 50,000,000 Toman)
+   * 4. Available Direct Deposit Balance Guard
+   * 5. Destination Validation (Luhn for Card, ISO 7064 Mod 97-10 for Sheba)
+   * 6. Account Owner Name Guard
+   * 7. ATOMIC BALANCE DEDUCTION & HOLD (Double-Spending Prevention)
    */
-  async requestWithdrawal(userId: string, dto: {
-    amountToman: number;
-    cardNumber?: string;
-    sheba?: string;
-    accountOwnerName?: string;
-    userNote?: string;
-  }) {
+  async requestWithdrawal(userId: string, dto: CreateWithdrawalDto) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('کاربر یافت نشد.');
 
-    const amount = Math.floor(Number(dto.amountToman));
-    if (isNaN(amount) || amount <= 0) {
-      throw new Error('مبلغ درخواستی برای تسویه نامعتبر است.');
+    // 1. User Active Status Guard
+    if (user.status !== 'ACTIVE') {
+      throw new BadRequestException('حساب کاربری شما فعال نیست و امکان ثبت درخواست تسویه حساب وجود ندارد.');
     }
 
-    const maxWithdrawable = user.directDepositBalance || 0;
-    if (amount > maxWithdrawable) {
-      throw new Error(
-        `حداکثر سقف مجاز تسویه وجه برای شما ${new Intl.NumberFormat('fa-IR').format(maxWithdrawable)} تومان است. مبالغ هدیه و کش‌بک (${new Intl.NumberFormat('fa-IR').format(user.cashbackBonusBalance || 0)} تومان) تنها برای خرید محصولات سایت قابل استفاده هستند و امکان برداشت نقدی ندارند.`
+    // 2. Pending Request Throttle Guard
+    const existingPending = await this.prisma.withdrawalRequest.findFirst({
+      where: { userId, status: 'PENDING' },
+    });
+    if (existingPending) {
+      throw new BadRequestException(
+        `شما یک درخواست تسویه در حال بررسی دارید (#${existingPending.id.slice(-6).toUpperCase()}). لطفاً تا تعیین تکلیف نهایی آن توسط واحد مالی شکیبا باشید.`
       );
     }
 
-    const request = await this.prisma.withdrawalRequest.create({
-      data: {
-        userId,
-        amountToman: amount,
-        cardNumber: dto.cardNumber || null,
-        sheba: dto.sheba || null,
-        accountOwnerName: dto.accountOwnerName || user.name,
-        userNote: dto.userNote || null,
-        status: 'PENDING',
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            phone: true,
-            email: true,
-            walletBalanceToman: true,
-            directDepositBalance: true,
-            cashbackBonusBalance: true,
+    // 3. Amount Boundaries
+    const amount = Math.floor(Number(dto.amountToman));
+    if (isNaN(amount) || amount <= 0) {
+      throw new BadRequestException('مبلغ درخواستی برای تسویه حساب نامعتبر است.');
+    }
+    if (amount < 50000) {
+      throw new BadRequestException('حداقل مبلغ قابل تسویه ۵۰,۰۰۰ تومان می‌باشد.');
+    }
+    if (amount > 50000000) {
+      throw new BadRequestException('حداکثر سقف مجاز تسویه در هر تراکنش ۵۰,۰۰۰,۰۰۰ تومان می‌باشد.');
+    }
+
+    // 4. Available Direct Deposit Balance Guard
+    const maxWithdrawable = user.directDepositBalance || 0;
+    if (amount > maxWithdrawable) {
+      throw new BadRequestException(
+        `حداکثر سقف مجاز تسویه وجه برای شما ${new Intl.NumberFormat('fa-IR').format(maxWithdrawable)} تومان است. مبالغ هدیه و کش‌بک (${new Intl.NumberFormat('fa-IR').format(user.cashbackBonusBalance || 0)} تومان) تنها برای خرید محصولات سایت قابل استفاده بوده و امکان برداشت نقدی ندارند.`
+      );
+    }
+
+    // 5. Destination Validation & Banking Checksums
+    if (!dto.cardNumber && !dto.sheba) {
+      throw new BadRequestException('ثبت حداقل یکی از مشخصات شماره شبا یا شماره کارت جهت واریز وجه الزامی است.');
+    }
+
+    let detectedBankName = 'شتاب / بانکی';
+    let formattedCard: string | null = null;
+    let formattedShebaStr: string | null = null;
+
+    if (dto.cardNumber && dto.cardNumber.trim()) {
+      const cardRes = validateIranianCardNumber(dto.cardNumber);
+      if (!cardRes.isValid) {
+        throw new BadRequestException(cardRes.error || 'شماره کارت بانکی نامعتبر است.');
+      }
+      formattedCard = formatCardNumber(dto.cardNumber);
+      if (cardRes.bankName) detectedBankName = cardRes.bankName;
+    }
+
+    if (dto.sheba && dto.sheba.trim()) {
+      const shebaRes = validateIranianSheba(dto.sheba);
+      if (!shebaRes.isValid) {
+        throw new BadRequestException(shebaRes.error || 'شماره شبا نامعتبر است.');
+      }
+      formattedShebaStr = shebaRes.formattedSheba!;
+      if (shebaRes.bankName) detectedBankName = shebaRes.bankName;
+    }
+
+    // 6. Account Owner Name Guard
+    const ownerName = (dto.accountOwnerName || user.name || '').trim();
+    if (!ownerName || ownerName.length < 3) {
+      throw new BadRequestException('نام و نام‌خانوادگی صاحب حساب الزامی است (حداقل ۳ حرف).');
+    }
+
+    // 7. Atomic Balance Deduction & Hold (Guaranteed Double-Spending Prevention)
+    const result = await this.prisma.$transaction(async (tx) => {
+      const newDirect = user.directDepositBalance - amount;
+      const newTotal = (user.walletBalanceToman || 0) - amount;
+
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          directDepositBalance: Math.max(0, newDirect),
+          walletBalanceToman: Math.max(0, newTotal),
+        },
+      });
+
+      const newRequest = await tx.withdrawalRequest.create({
+        data: {
+          userId,
+          amountToman: amount,
+          cardNumber: formattedCard,
+          sheba: formattedShebaStr,
+          bankName: detectedBankName,
+          accountOwnerName: ownerName,
+          userNote: dto.userNote?.trim() || null,
+          status: 'PENDING',
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+              email: true,
+              walletBalanceToman: true,
+              directDepositBalance: true,
+              cashbackBonusBalance: true,
+            },
           },
         },
-      },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: 'ثبت و قفل موجودی جهت تسویه حساب',
+          details: `کاربر ${user.name} درخواست تسویه مبلغ ${new Intl.NumberFormat('fa-IR').format(amount)} تومان به مقصد ${detectedBankName} را ثبت نمود. مبلغ از کیف پول کسر و قفل گردید.`,
+          user: user.name,
+          type: 'finance',
+        },
+      });
+
+      return newRequest;
     });
 
-    await this.prisma.auditLog.create({
-      data: {
-        action: 'ثبت درخواست تسویه و برداشت وجه',
-        details: `کاربر ${user.name} درخواست تسویه مبلغ ${new Intl.NumberFormat('fa-IR').format(amount)} تومان را ثبت نمود.`,
-        user: user.name,
-        type: 'finance',
-      },
-    });
-
-    return request;
+    this.logger.log(`Withdrawal request created for user ${user.id}: ${amount} Toman (locked).`);
+    return result;
   }
 
   /**
@@ -474,13 +561,12 @@ export class UsersService {
 
   /**
    * Admin: Process (Approve or Reject) a withdrawal request
+   * Enforces:
+   * 1. Request existence and PENDING state guard
+   * 2. If APPROVE: bankTrackingCode required, updates status, dispatches automated email
+   * 3. If REJECT: adminNote required, ATOMIC BALANCE RESTORATION, dispatches automated email
    */
-  async processWithdrawal(id: string, dto: {
-    action: 'APPROVE' | 'REJECT';
-    adminNote?: string;
-    bankTrackingCode?: string;
-    adminName?: string;
-  }) {
+  async processWithdrawal(id: string, dto: ProcessWithdrawalDto) {
     const request = await this.prisma.withdrawalRequest.findUnique({
       where: { id },
       include: { user: true },
@@ -488,40 +574,31 @@ export class UsersService {
     if (!request) throw new NotFoundException('درخواست تسویه یافت نشد.');
 
     if (request.status !== 'PENDING') {
-      throw new Error('این درخواست قبلاً بررسی و نهایی شده است.');
+      throw new BadRequestException(
+        `این درخواست قبلاً تعیین تکلیف شده است (وضعیت فعلی: ${request.status === 'APPROVED' ? 'تایید شده' : 'رد شده'}).`
+      );
     }
 
     const adminName = dto.adminName || 'مدیر مالی';
+    const adminId = dto.adminId || null;
 
     if (dto.action === 'APPROVE') {
-      const user = request.user;
-      const currentDirect = user.directDepositBalance || 0;
-      const currentBonus = user.cashbackBonusBalance || 0;
-
-      if (request.amountToman > currentDirect) {
-        throw new Error('موجودی واریزی کاربر در حال حاضر کمتر از مبلغ این درخواست است.');
+      if (!dto.bankTrackingCode || !dto.bankTrackingCode.trim()) {
+        throw new BadRequestException('ثبت کد رهگیری بانکی یا شماره سند واریز برای تایید الزامی است.');
       }
 
-      const newDirect = currentDirect - request.amountToman;
-      const newTotal = newDirect + currentBonus;
+      const trackingCode = dto.bankTrackingCode.trim();
+      const receiptUrl = dto.bankReceiptUrl?.trim() || null;
 
-      // Deduct from user
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: {
-          directDepositBalance: newDirect,
-          walletBalanceToman: newTotal,
-        },
-      });
-
-      // Mark request approved
       const updatedRequest = await this.prisma.withdrawalRequest.update({
         where: { id },
         data: {
           status: 'APPROVED',
-          adminNote: dto.adminNote || null,
-          bankTrackingCode: dto.bankTrackingCode || null,
+          adminNote: dto.adminNote?.trim() || null,
+          bankTrackingCode: trackingCode,
+          bankReceiptUrl: receiptUrl,
           processedByAdminName: adminName,
+          processedByAdminId: adminId,
           processedAt: new Date(),
         },
         include: { user: true },
@@ -529,35 +606,95 @@ export class UsersService {
 
       await this.prisma.auditLog.create({
         data: {
-          action: 'تایید و تسویه درخواست برداشت وجه',
-          details: `درخواست برداشت ${new Intl.NumberFormat('fa-IR').format(request.amountToman)} تومان کاربر ${user.name} توسط ${adminName} تایید و تسویه شد. پیگیری: ${dto.bankTrackingCode || 'ندارد'}.`,
+          action: 'تایید و تسویه نهایی درخواست برداشت وجه',
+          details: `درخواست برداشت ${new Intl.NumberFormat('fa-IR').format(request.amountToman)} تومان کاربر ${request.user.name} توسط ${adminName} تایید و تسویه شد. کد رهگیری: ${trackingCode}.`,
           user: adminName,
+          adminId,
+          adminName,
           type: 'finance',
         },
       });
+
+      // Send automated approval notification email to user (non-blocking)
+      if (request.user?.email && request.user.email.includes('@')) {
+        this.emailService
+          .sendWithdrawalStatusEmail({
+            recipientEmail: request.user.email,
+            customerName: request.user.name,
+            amountToman: request.amountToman,
+            status: 'APPROVED',
+            bankName: request.bankName || undefined,
+            destination: request.sheba || request.cardNumber || undefined,
+            bankTrackingCode: trackingCode,
+            bankReceiptUrl: receiptUrl || undefined,
+          })
+          .catch((err) => {
+            this.logger.warn(`Failed to send withdrawal approval email to ${request.user.email}: ${err?.message}`);
+          });
+      }
 
       return updatedRequest;
     } else {
-      // REJECT
-      const updatedRequest = await this.prisma.withdrawalRequest.update({
-        where: { id },
-        data: {
-          status: 'REJECTED',
-          adminNote: dto.adminNote || 'درخواست تسویه توسط مدیریت رد شد.',
-          processedByAdminName: adminName,
-          processedAt: new Date(),
-        },
-        include: { user: true },
+      // REJECT: Rejection note is strictly required
+      if (!dto.adminNote || !dto.adminNote.trim() || dto.adminNote.trim().length < 3) {
+        throw new BadRequestException('ثبت دلیل رد درخواست جهت اطلاع کاربر الزامی است.');
+      }
+
+      const rejectionReason = dto.adminNote.trim();
+
+      // ATOMIC TRANSACTION: Restore held funds back to user balances
+      const updatedRequest = await this.prisma.$transaction(async (tx) => {
+        // Restore directDepositBalance and walletBalanceToman
+        await tx.user.update({
+          where: { id: request.userId },
+          data: {
+            directDepositBalance: { increment: request.amountToman },
+            walletBalanceToman: { increment: request.amountToman },
+          },
+        });
+
+        const updated = await tx.withdrawalRequest.update({
+          where: { id },
+          data: {
+            status: 'REJECTED',
+            adminNote: rejectionReason,
+            processedByAdminName: adminName,
+            processedByAdminId: adminId,
+            processedAt: new Date(),
+          },
+          include: { user: true },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            action: 'رد درخواست تسویه وجه و بازگشت موجودی به کیف پول',
+            details: `درخواست برداشت ${new Intl.NumberFormat('fa-IR').format(request.amountToman)} تومان کاربر ${request.user.name} توسط ${adminName} رد شد و مبلغ به کیف پول کاربر بازگردانده شد. علت: ${rejectionReason}.`,
+            user: adminName,
+            adminId,
+            adminName,
+            type: 'finance',
+          },
+        });
+
+        return updated;
       });
 
-      await this.prisma.auditLog.create({
-        data: {
-          action: 'رد درخواست تسویه وجه',
-          details: `درخواست برداشت ${new Intl.NumberFormat('fa-IR').format(request.amountToman)} تومان کاربر ${request.user.name} توسط ${adminName} رد شد. علت: ${dto.adminNote || 'بدون توضیح'}.`,
-          user: adminName,
-          type: 'finance',
-        },
-      });
+      // Send automated rejection notification email to user (non-blocking)
+      if (request.user?.email && request.user.email.includes('@')) {
+        this.emailService
+          .sendWithdrawalStatusEmail({
+            recipientEmail: request.user.email,
+            customerName: request.user.name,
+            amountToman: request.amountToman,
+            status: 'REJECTED',
+            bankName: request.bankName || undefined,
+            destination: request.sheba || request.cardNumber || undefined,
+            rejectionReason,
+          })
+          .catch((err) => {
+            this.logger.warn(`Failed to send withdrawal rejection email to ${request.user.email}: ${err?.message}`);
+          });
+      }
 
       return updatedRequest;
     }

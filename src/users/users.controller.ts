@@ -7,14 +7,34 @@ import {
   Body,
   Param,
   Query,
+  Headers,
+  ForbiddenException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { ApiResponse } from '../common/dto/api-response.dto';
 import { CreateUserDto, UpdateUserRoleDto, UpdateUserStatusDto, UpdateProfileDto, TopUpWalletDto, ConvertPointsDto, CreateWithdrawalDto, ProcessWithdrawalDto } from './users.dto';
+import { JwtService } from '@nestjs/jwt';
 
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly jwtService: JwtService,
+  ) {}
+
+  private extractUserRole(authHeader?: string, roleFromClient?: string): string {
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.substring(7);
+        const payload: any = this.jwtService.decode(token);
+        if (payload?.role) return payload.role;
+      } catch {
+        // Fallback
+      }
+    }
+    return roleFromClient || 'USER';
+  }
 
   @Get()
   async getUsers(
@@ -72,7 +92,13 @@ export class UsersController {
     @Query('status') status?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
+    @Headers('authorization') authHeader?: string,
+    @Query('role') roleFromQuery?: string,
   ) {
+    const role = this.extractUserRole(authHeader, roleFromQuery);
+    if (role !== 'SUPER_ADMIN' && role !== 'FINANCE_ADMIN' && role !== 'ADMIN') {
+      throw new ForbiddenException('شما دسترسی لازم به بخش تسویه حساب مالی را ندارید.');
+    }
     const result = await this.usersService.getAdminWithdrawals({
       status,
       limit: limit ? Number(limit) : undefined,
@@ -88,7 +114,13 @@ export class UsersController {
   async processWithdrawal(
     @Param('id') id: string,
     @Body() dto: ProcessWithdrawalDto,
+    @Headers('authorization') authHeader?: string,
+    @Body('role') roleFromBody?: string,
   ) {
+    const role = this.extractUserRole(authHeader, roleFromBody);
+    if (role !== 'SUPER_ADMIN' && role !== 'FINANCE_ADMIN' && role !== 'ADMIN') {
+      throw new ForbiddenException('شما دسترسی لازم جهت پردازش درخواست‌های تسویه حساب را ندارید.');
+    }
     try {
       const result = await this.usersService.processWithdrawal(id, dto);
       return ApiResponse.success(
@@ -200,7 +232,7 @@ export class UsersController {
   ) {
     try {
       const result = await this.usersService.requestWithdrawal(id, dto);
-      return ApiResponse.success(result, 'درخواست تسویه با موفقیت ثبت شد و به واحد مالی ارجاع گردید.');
+      return ApiResponse.success(result, 'درخواست تسویه با موفقیت ثبت شد، مبلغ از کیف پول قفل گردید و به واحد مالی ارجاع شد.');
     } catch (err: any) {
       return ApiResponse.error(err?.message || 'خطا در ثبت درخواست تسویه.');
     }
