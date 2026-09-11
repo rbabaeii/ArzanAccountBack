@@ -213,4 +213,13 @@ export class UsersController {
     const result = await this.usersService.getUserWithdrawals(id);
     return ApiResponse.success(result);
   }
+
+  /**
+   * User fetches their referral network and earnings per user
+   */
+  @Get(':id/referrals')
+  async getReferralNetwork(@Param('id') id: string) {
+    const result = await this.usersService.getReferralNetwork(id);
+    return ApiResponse.success(result);
+  }
 }

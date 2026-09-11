@@ -197,6 +197,7 @@ export class AuthService implements OnApplicationBootstrap {
     let user = await this.prisma.user.findFirst({
       where: { email: cleanEmail },
     });
+    const isNewUser = !user;
 
     if (!user) {
       const baseName = cleanEmail.split('@')[0];
@@ -215,8 +216,10 @@ export class AuthService implements OnApplicationBootstrap {
     // Ensure user has their own referralCode
     user.referralCode = await this.ensureUserReferralCode(user);
 
-    // Bind inviter referral code if provided
-    await this.bindReferralIfApplicable(user, referralCode);
+    // Bind inviter referral code ONLY if this is a newly registered user
+    if (isNewUser && referralCode) {
+      await this.bindReferralIfApplicable(user, referralCode);
+    }
 
     // Re-fetch user to include latest balances and referral info
     user = await this.prisma.user.findUnique({ where: { id: user.id } });
@@ -310,6 +313,7 @@ export class AuthService implements OnApplicationBootstrap {
     let user = await this.prisma.user.findFirst({
       where: { phone: cleanPhone },
     });
+    const isNewUser = !user;
 
     // Special test numbers
     const ADMIN_ROLES_MAP: Record<string, { role: string; name: string }> = {
@@ -383,8 +387,10 @@ export class AuthService implements OnApplicationBootstrap {
     // Ensure user has their own referral code
     user.referralCode = await this.ensureUserReferralCode(user);
 
-    // Bind inviter referral code if provided
-    await this.bindReferralIfApplicable(user, referralCode);
+    // Bind inviter referral code ONLY if this is a newly registered user
+    if (isNewUser && referralCode) {
+      await this.bindReferralIfApplicable(user, referralCode);
+    }
 
     // Re-fetch user to include latest balances and referral info
     user = await this.prisma.user.findUnique({ where: { id: user.id } });

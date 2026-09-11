@@ -648,4 +648,125 @@ export class UsersService {
 
     return updated;
   }
+
+  /**
+   * Get user's referral network: referred users list and earnings per user
+   */
+  async getReferralNetwork(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('کاربر یافت نشد.');
+
+    const referralCode = user.referralCode || `ARZAN-${user.id.slice(-4).toUpperCase()}`;
+
+    // Get cashback percentage setting
+    const setting = await this.prisma.systemSetting.findUnique({
+      where: { key: 'ORDER_CASHBACK_PERCENT' },
+    });
+    const cashbackPercent = setting?.value ? parseInt(setting.value, 10) : 10;
+
+    // Potential referral codes used by inviter
+    const candidates = [referralCode, user.id, `ARZAN-${user.id.slice(-4).toUpperCase()}`];
+    if (user.referralCode) {
+      candidates.push(user.referralCode.toUpperCase());
+      candidates.push(user.referralCode.toLowerCase());
+    }
+
+    const uniqueCandidates = Array.from(new Set(candidates));
+
+    const referredUsers = await this.prisma.user.findMany({
+      where: {
+        referredByCode: {
+          in: uniqueCandidates,
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        email: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const referralsList: any[] = [];
+    let totalOrdersCount = 0;
+    let totalSpentByReferrals = 0;
+
+    for (const refUser of referredUsers) {
+      const conditions: any[] = [];
+      if (refUser.phone) conditions.push({ customerPhone: refUser.phone });
+      if (refUser.email) conditions.push({ customerEmail: refUser.email });
+
+      let orders: any[] = [];
+      if (conditions.length > 0) {
+        orders = await this.prisma.order.findMany({
+          where: {
+            OR: conditions,
+            status: { notIn: ['cancelled', 'refunded'] },
+          },
+          select: {
+            id: true,
+            totalPriceToman: true,
+            createdAt: true,
+          },
+        });
+      }
+
+      const ordersCount = orders.length;
+      const totalSpentToman = orders.reduce((sum, o) => sum + (o.totalPriceToman || 0), 0);
+      const earnedFromUserToman = Math.round(totalSpentToman * (cashbackPercent / 100));
+
+      totalOrdersCount += ordersCount;
+      totalSpentByReferrals += totalSpentToman;
+
+      let phoneMasked = 'بدون شماره';
+      if (refUser.phone) {
+        const p = refUser.phone.trim();
+        if (p.length >= 8) {
+          phoneMasked = `${p.slice(0, 4)}***${p.slice(-4)}`;
+        } else {
+          phoneMasked = p;
+        }
+      }
+
+      let emailMasked = 'بدون ایمیل';
+      if (refUser.email) {
+        const parts = refUser.email.split('@');
+        if (parts[0].length > 2) {
+          emailMasked = `${parts[0].slice(0, 2)}***@${parts[1] || ''}`;
+        } else {
+          emailMasked = refUser.email;
+        }
+      }
+
+      referralsList.push({
+        id: refUser.id,
+        name: refUser.name || 'کاربر ارزون‌حساب',
+        phoneMasked,
+        emailMasked,
+        joinedAt: refUser.createdAt,
+        ordersCount,
+        totalSpentToman,
+        earnedFromUserToman,
+      });
+    }
+
+    const activeBuyers = referralsList.filter((r) => r.ordersCount > 0).length;
+    const calculatedEarned = Math.round(totalSpentByReferrals * (cashbackPercent / 100));
+    const totalEarnedToman = Math.max(user.cashbackBonusBalance || 0, calculatedEarned);
+
+    return {
+      referralCode,
+      cashbackPercent,
+      stats: {
+        totalReferred: referralsList.length,
+        activeBuyers,
+        totalOrdersCount,
+        totalEarnedToman,
+        totalSpentByReferrals,
+      },
+      referrals: referralsList,
+    };
+  }
 }

@@ -488,7 +488,13 @@ export class SearchService implements OnModuleInit {
     const targetTags = new Set(target.tags.map((t) => this.normalizeText(t)));
 
     const scored = this.productsIndex
-      .filter((p) => p.id !== target.id)
+      .filter(
+        (p) =>
+          p.id !== target.id &&
+          p.isActive &&
+          p.inStock &&
+          (p.stockCount === undefined || p.stockCount > 0)
+      )
       .map((p) => {
         let commonTags = 0;
         for (const t of p.tags) {
