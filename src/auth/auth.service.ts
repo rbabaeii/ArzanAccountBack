@@ -8,6 +8,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
+import { RedisService } from '../redis/redis.service';
 import * as bcrypt from 'bcryptjs';
 
 interface StoredOtp {
@@ -18,13 +19,14 @@ interface StoredOtp {
 @Injectable()
 export class AuthService implements OnApplicationBootstrap {
   private readonly logger = new Logger(AuthService.name);
-  // In-memory OTP storage: phone -> { code, expiresAt }
+  // In-memory OTP storage fallback: phone -> { code, expiresAt }
   private otpMap = new Map<string, StoredOtp>();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly emailService: EmailService,
+    private readonly redisService: RedisService,
   ) {}
 
   async onApplicationBootstrap() {
@@ -131,16 +133,17 @@ export class AuthService implements OnApplicationBootstrap {
     const cleanPhone = phone.trim();
     const otpCode = this.generateOtpCode();
 
-    // Store in OTP map with 5 minutes validity
+    // Store in Redis with 5 minutes validity
+    await this.redisService.set(`otp:phone:${cleanPhone}`, otpCode, 300);
     this.otpMap.set(cleanPhone, {
       code: otpCode,
       expiresAt: Date.now() + 5 * 60 * 1000,
     });
 
-    this.logger.log(`[AUTH PHONE OTP] Generated dynamic code ${otpCode} for phone ${cleanPhone}`);
+    this.logger.log(`[AUTH PHONE OTP] Generated dynamic code ${otpCode} for phone ${cleanPhone} (Stored in Redis)`);
     console.log(`\n======================================================================`);
     console.log(`🔑 [AUTH OTP CODE] Phone: ${cleanPhone} | CODE: >>> ${otpCode} <<<`);
-    console.log(`⏰ Valid for 5 minutes (300 seconds)`);
+    console.log(`⏰ Valid for 5 minutes (300 seconds) - Saved in Redis & Memory`);
     console.log(`======================================================================\n`);
 
     return {
@@ -156,6 +159,7 @@ export class AuthService implements OnApplicationBootstrap {
     }
 
     const otpCode = this.generateOtpCode();
+    await this.redisService.set(`otp:email:${cleanEmail}`, otpCode, 300);
     this.otpMap.set(cleanEmail, {
       code: otpCode,
       expiresAt: Date.now() + 5 * 60 * 1000,
@@ -184,14 +188,16 @@ export class AuthService implements OnApplicationBootstrap {
     const cleanEmail = email.trim().toLowerCase();
     const cleanCode = code.trim();
 
+    const redisOtp = await this.redisService.get(`otp:email:${cleanEmail}`);
     const record = this.otpMap.get(cleanEmail);
-    const isValid = record && record.code === cleanCode && record.expiresAt > Date.now();
+    const isValid = (redisOtp && redisOtp === cleanCode) || (record && record.code === cleanCode && record.expiresAt > Date.now());
 
     if (!isValid) {
       throw new BadRequestException('کد تایید وارد شده نامعتبر است یا منقضی شده است.');
     }
 
     // Remove OTP once verified
+    await this.redisService.del(`otp:email:${cleanEmail}`);
     this.otpMap.delete(cleanEmail);
 
     let user = await this.prisma.user.findFirst({
@@ -252,6 +258,10 @@ export class AuthService implements OnApplicationBootstrap {
     }
 
     const otpCode = this.generateOtpCode();
+    await this.redisService.set(`otp:phone:${cleanPhone}`, otpCode, 300);
+    if (user.email) {
+      await this.redisService.set(`otp:email:${user.email.toLowerCase().trim()}`, otpCode, 300);
+    }
     this.otpMap.set(cleanPhone, {
       code: otpCode,
       expiresAt: Date.now() + 5 * 60 * 1000,
@@ -263,10 +273,10 @@ export class AuthService implements OnApplicationBootstrap {
     const masked = namePart.length <= 2 ? namePart[0] + '***' : namePart.slice(0, 2) + '***' + namePart.slice(-1);
     const maskedEmail = `${masked}@${domainPart}`;
 
-    this.logger.log(`[AUTH EMAIL OTP] Sending code ${otpCode} to ${user.email} for phone ${cleanPhone}`);
+    this.logger.log(`[AUTH EMAIL OTP] Sending code ${otpCode} to ${user.email} for phone ${cleanPhone} (Stored in Redis)`);
     console.log(`\n======================================================================`);
     console.log(`📧 [AUTH EMAIL OTP] Phone: ${cleanPhone} | Email: ${user.email} | CODE: >>> ${otpCode} <<<`);
-    console.log(`⏰ Valid for 5 minutes (300 seconds)`);
+    console.log(`⏰ Valid for 5 minutes (300 seconds) - Saved in Redis & Memory`);
     console.log(`======================================================================\n`);
 
     // Dispatch email sending in background so HTTP response is instant (<50ms)
@@ -294,10 +304,12 @@ export class AuthService implements OnApplicationBootstrap {
     const cleanPhone = phone.trim();
     const cleanCode = code.trim();
 
+    const redisOtp = await this.redisService.get(`otp:phone:${cleanPhone}`);
     const record = this.otpMap.get(cleanPhone);
 
-    // Accept matching stored dynamic OTP, or fallback for demo admin if gateway not connected
+    // Accept matching stored dynamic OTP from Redis or memory fallback, or 11111 in dev
     const isAccepted =
+      (redisOtp && redisOtp === cleanCode) ||
       (record && record.code === cleanCode && record.expiresAt > Date.now()) ||
       (record && record.code === cleanCode) ||
       (cleanCode === '11111' && (!process.env.NODE_ENV || process.env.NODE_ENV !== 'production'));
@@ -307,6 +319,7 @@ export class AuthService implements OnApplicationBootstrap {
     }
 
     // Remove OTP once verified
+    await this.redisService.del(`otp:phone:${cleanPhone}`);
     this.otpMap.delete(cleanPhone);
 
     // Find or create user
