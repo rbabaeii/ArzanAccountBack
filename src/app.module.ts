@@ -13,6 +13,7 @@ import { MediaModule } from './media/media.module';
 import { EmailModule } from './email/email.module';
 import { OrdersModule } from './orders/orders.module';
 import { SearchModule } from './search/search.module';
+import { RedisModule } from './redis/redis.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { SearchModule } from './search/search.module';
     EmailModule,
     OrdersModule,
     SearchModule,
+    RedisModule,
   ],
 })
 export class AppModule {}
