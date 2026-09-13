@@ -178,6 +178,35 @@ export class CartBeCartService {
       dto.callbackUrl ||
       `${siteBaseUrl}/payment/cartbecart/callback`;
 
+    // 0. Check if an active unexpired pending payment token already exists for this order
+    if (dto.orderNumber) {
+      const existing = await this.prisma.cardPayment.findFirst({
+        where: {
+          orderNumber: dto.orderNumber,
+          status: 'PENDING',
+          expiresAt: { gt: new Date() },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (existing) {
+        const uniqueAmountToman = Math.ceil((existing.uniqueAmountRial || existing.amountRial) / 10);
+        return {
+          id: existing.id,
+          paymentToken: existing.paymentToken,
+          orderNumber: existing.orderNumber,
+          amountToman: existing.amountToman,
+          amountRial: existing.amountRial,
+          uniqueAmountRial: existing.uniqueAmountRial || existing.amountRial,
+          uniqueAmountToman,
+          destCardNumber: existing.destCardNumber || fallbackCardNumber,
+          destCardOwner: existing.destCardOwner || fallbackCardOwner,
+          expiresAt: existing.expiresAt,
+          paymentUrl: existing.paymentUrl,
+          status: existing.status,
+        };
+      }
+    }
+
     // 1. Call CartBeCart client to create order
     const cbcOrder = await this.client.createOrder(apiKey, {
       amount: amountRial,
