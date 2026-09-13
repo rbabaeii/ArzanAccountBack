@@ -14,6 +14,7 @@ import { EmailModule } from './email/email.module';
 import { OrdersModule } from './orders/orders.module';
 import { SearchModule } from './search/search.module';
 import { RedisModule } from './redis/redis.module';
+import { CartBeCartModule } from './cartbecart/cartbecart.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { RedisModule } from './redis/redis.module';
     OrdersModule,
     SearchModule,
     RedisModule,
+    CartBeCartModule,
   ],
 })
 export class AppModule {}

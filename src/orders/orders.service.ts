@@ -81,7 +81,12 @@ export class OrdersService {
     }
 
     const firstProductTitle = dto.items?.[0]?.productTitle || 'اشتراک دیجیتال';
-    const status = (deliveryType === 'account_activation' || isHybrid) ? 'processing' : 'delivered';
+    const isCartPayment = dto.paymentGateway === 'cartbecart';
+    const status = isCartPayment
+      ? 'pending'
+      : (deliveryType === 'account_activation' || isHybrid)
+      ? 'processing'
+      : 'delivered';
 
     const order = await this.prisma.order.create({
       data: {
@@ -142,6 +147,11 @@ export class OrdersService {
     // Trigger non-blocking transactional email in background (never block HTTP response)
     (async () => {
       try {
+        // Do not dispatch product delivery emails for unpaid pending orders
+        if (order.status === 'pending') {
+          return;
+        }
+
         if (isHybrid) {
           // Mode Hybrid: Deliver instant items immediately & inform customer about remaining activation queue
           await this.emailService.sendOrderReceipt({
