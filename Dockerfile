@@ -49,4 +49,4 @@ COPY --from=builder /app/scripts ./scripts
 EXPOSE 4000
 
 # On container boot: auto push Prisma schema to PostgreSQL, then launch server
-CMD ["sh", "-c", "npx prisma db push && node dist/main.js"]
+CMD ["sh", "-c", "npx prisma db push && node -r ts-node/register ./prisma/seed.ts && node dist/main.js"]
