@@ -1,10 +1,19 @@
-import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
-import { CARTBECART_BASE_URL, DEFAULT_FALLBACK_CARD } from './cartbecart.constants';
+import {
+  Injectable,
+  Logger,
+  HttpException,
+  HttpStatus,
+  BadRequestException,
+  UnauthorizedException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { CARTBECART_BASE_URL } from './cartbecart.constants';
 import {
   CartBeCartCreateOrderPayload,
   CartBeCartCreateOrderResponse,
   CartBeCartOrderStatusResponse,
   CartBeCartPayDetailsResponse,
+  CartBeCartShopConfigResponse,
 } from './cartbecart.types';
 
 @Injectable()
@@ -13,22 +22,54 @@ export class CartBeCartClientService {
   private readonly baseUrl: string = CARTBECART_BASE_URL;
 
   /**
-   * Create an order in CartBeCart to obtain unique_amount and payment_token
+   * Fetch current shop configuration, plan, active card status, and quota from CartBeCart API
+   */
+  async getShopConfig(apiKey: string): Promise<CartBeCartShopConfigResponse | null> {
+    if (!apiKey || apiKey.trim().length === 0) {
+      return null;
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/api/v1/public/shop-config`, {
+        method: 'GET',
+        headers: {
+          'X-API-Key': apiKey.trim(),
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.warn(`CartBeCart getShopConfig returned status ${response.status}: ${errorText}`);
+        return null;
+      }
+
+      const data = (await response.json()) as CartBeCartShopConfigResponse;
+      return data;
+    } catch (err: any) {
+      this.logger.error(`Failed to fetch CartBeCart shop-config: ${err?.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Create a real order in CartBeCart to obtain unique_amount and payment_token
    */
   async createOrder(
     apiKey: string,
     payload: CartBeCartCreateOrderPayload,
   ): Promise<CartBeCartCreateOrderResponse> {
-    if (!apiKey || apiKey === 'mock' || apiKey === 'demo') {
-      this.logger.warn('CartBeCart API key not provided or set to mock. Returning simulated order.');
-      return this.createMockOrder(payload);
+    if (!apiKey || apiKey.trim().length === 0) {
+      throw new BadRequestException('کلید وب‌سرویس CartBeCart تنظیم نشده است.');
     }
+
+    const cleanApiKey = apiKey.trim();
 
     try {
       const response = await fetch(`${this.baseUrl}/api/v1/public/orders`, {
         method: 'POST',
         headers: {
-          'X-API-Key': apiKey,
+          'X-API-Key': cleanApiKey,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -41,15 +82,47 @@ export class CartBeCartClientService {
       });
 
       if (response.status === 401) {
-        this.logger.error('Invalid CartBeCart API Key (401 Unauthorized). Falling back to simulated order.');
-        return this.createMockOrder(payload);
+        this.logger.error('Invalid CartBeCart API Key (401 Unauthorized).');
+        throw new UnauthorizedException('کلید وب‌سرویس CartBeCart نامعتبر است (401).');
+      }
+
+      if (response.status === 403) {
+        let detail = 'دسترسی مسدود است';
+        try {
+          const errData = await response.json();
+          detail = errData.detail || detail;
+        } catch {}
+        this.logger.error(`CartBeCart 403 Forbidden: ${detail}`);
+        throw new ForbiddenException(`دسترسی به درگاه CartBeCart مسدود است: ${detail}`);
+      }
+
+      if (response.status === 422) {
+        let detail = 'درخواست نامعتبر';
+        try {
+          const errData = await response.json();
+          detail = errData.detail || detail;
+        } catch {}
+        this.logger.error(`CartBeCart 422 Unprocessable: ${detail}`);
+        if (detail.includes('کارت پیش‌فرض') || detail.includes('کارت')) {
+          throw new BadRequestException(
+            'کارت پیش‌فرض فعالی در پنل CartBeCart تنظیم نشده است. لطفاً در داشبورد cartbecart.com کارت بانکی پیش‌فرض خود را اضافه و فعال نمایید.',
+          );
+        }
+        throw new BadRequestException(`درخواست نامعتبر CartBeCart: ${detail}`);
+      }
+
+      if (response.status === 429) {
+        this.logger.warn('CartBeCart rate limit reached (429).');
+        throw new HttpException(
+          'تعداد درخواست‌ها به درگاه CartBeCart بیش از حد مجاز است. لطفاً کمی صبر کرده و مجدداً تلاش نمایید.',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
       }
 
       if (!response.ok) {
         const errorText = await response.text();
         this.logger.error(`CartBeCart create order failed (${response.status}): ${errorText}`);
-        // If upstream error, fallback to mock order so the checkout experience doesn't break
-        return this.createMockOrder(payload);
+        throw new BadRequestException(`خطا در ایجاد تراکنش کارت‌به‌کارت (${response.status}): ${errorText}`);
       }
 
       const data = (await response.json()) as CartBeCartCreateOrderResponse;
@@ -61,8 +134,11 @@ export class CartBeCartClientService {
       }
       return data;
     } catch (err: any) {
-      this.logger.error(`CartBeCart connection error: ${err?.message}. Using simulated order.`);
-      return this.createMockOrder(payload);
+      if (err instanceof HttpException) {
+        throw err;
+      }
+      this.logger.error(`CartBeCart network error: ${err?.message}`);
+      throw new BadRequestException(`خطا در اتصال به درگاه CartBeCart: ${err?.message}`);
     }
   }
 
@@ -73,7 +149,7 @@ export class CartBeCartClientService {
     apiKey: string,
     paymentToken: string,
   ): Promise<CartBeCartOrderStatusResponse | null> {
-    if (!apiKey || apiKey === 'mock' || paymentToken.startsWith('SIM-')) {
+    if (!apiKey || !paymentToken) {
       return null;
     }
 
@@ -81,7 +157,7 @@ export class CartBeCartClientService {
       const response = await fetch(`${this.baseUrl}/api/v1/public/orders/${paymentToken}`, {
         method: 'GET',
         headers: {
-          'X-API-Key': apiKey,
+          'X-API-Key': apiKey.trim(),
           'Content-Type': 'application/json',
         },
       });
@@ -109,16 +185,8 @@ export class CartBeCartClientService {
    * This endpoint does not require an API key and uses payment_token
    */
   async getPayDetails(paymentToken: string): Promise<CartBeCartPayDetailsResponse | null> {
-    if (paymentToken.startsWith('SIM-')) {
-      return {
-        order_code: paymentToken,
-        unique_amount: 1000000,
-        card_number: DEFAULT_FALLBACK_CARD.cardNumber,
-        card_owner: DEFAULT_FALLBACK_CARD.cardOwner,
-        shop_support_contact: '021-91000000',
-        status: 'pending',
-        expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      };
+    if (!paymentToken) {
+      return null;
     }
 
     try {
@@ -140,27 +208,5 @@ export class CartBeCartClientService {
       return null;
     }
   }
-
-  /**
-   * Helper to generate a realistic simulated CartBeCart order in development / test environments
-   */
-  private createMockOrder(payload: CartBeCartCreateOrderPayload): CartBeCartCreateOrderResponse {
-    // Unique amount adds a random 3-digit rial fraction (e.g. 100 to 900)
-    const randomRials = Math.floor(100 + Math.random() * 890);
-    const uniqueAmount = payload.amount + randomRials;
-    const paymentToken = `SIM-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
-
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-    const graceEndsAt = new Date(Date.now() + 75 * 60 * 1000).toISOString();
-
-    return {
-      order_id: `sim-order-${Date.now()}`,
-      order_code: `CBC-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-      payment_token: paymentToken,
-      payment_url: `https://cartbecart.com/pay/${paymentToken}`,
-      unique_amount: uniqueAmount,
-      expires_at: expiresAt,
-      grace_ends_at: graceEndsAt,
-    };
-  }
 }
+

@@ -61,6 +61,40 @@ export class CartBeCartService {
         this.getSetting(SETTING_KEY_FALLBACK_BANK_NAME, DEFAULT_FALLBACK_CARD.bankName),
       ]);
 
+    let liveStatus: {
+      connected: boolean;
+      shopName?: string;
+      plan?: string;
+      subscriptionActive?: boolean;
+      apiAccess?: boolean;
+      orderTtlMinutes?: number;
+      graceMinutes?: number;
+      hasActiveDefaultCard?: boolean;
+      quota?: { used: number; limit: number; period_ends_at: string };
+      error?: string;
+    } = { connected: false };
+
+    if (apiKey) {
+      try {
+        const config = await this.client.getShopConfig(apiKey);
+        if (config) {
+          liveStatus = {
+            connected: true,
+            shopName: config.shop_name,
+            plan: config.plan,
+            subscriptionActive: config.subscription_active,
+            apiAccess: config.api_access,
+            orderTtlMinutes: config.order_ttl_minutes,
+            graceMinutes: config.grace_minutes,
+            hasActiveDefaultCard: config.has_active_default_card,
+            quota: config.quota,
+          };
+        }
+      } catch (err: any) {
+        liveStatus = { connected: false, error: err?.message };
+      }
+    }
+
     return {
       apiKey: apiKey ? `${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}` : '',
       hasApiKey: Boolean(apiKey),
@@ -68,6 +102,7 @@ export class CartBeCartService {
       fallbackCardNumber,
       fallbackCardOwner,
       fallbackBankName,
+      liveStatus,
     };
   }
 
@@ -220,7 +255,7 @@ export class CartBeCartService {
     let destCardNumber = fallbackCardNumber;
     let destCardOwner = fallbackCardOwner;
 
-    if (cbcOrder.payment_token && !cbcOrder.payment_token.startsWith('SIM-')) {
+    if (cbcOrder.payment_token) {
       const payDetails = await this.client.getPayDetails(cbcOrder.payment_token);
       if (payDetails?.card_number) {
         destCardNumber = payDetails.card_number;
@@ -293,6 +328,18 @@ export class CartBeCartService {
       };
     }
 
+    // If this is a manual review payment or not connected to a CartBeCart remote order, do not call CartBeCart API
+    if (
+      payment.status === 'MANUAL_REVIEW' ||
+      payment.paymentToken.startsWith('MANUAL-') ||
+      !payment.cartBeCartOrderId
+    ) {
+      return {
+        ...payment,
+        isCompleted: payment.status === 'APPROVED' || payment.status === 'PAID',
+      };
+    }
+
     const apiKey = await this.getSetting(SETTING_KEY_CARTBECART_API_KEY, process.env.CARTBECART_API_KEY || '');
     const remoteOrder = await this.client.getOrderStatus(apiKey, paymentToken);
 
@@ -346,14 +393,54 @@ export class CartBeCartService {
    * Submit manual receipt/tracking code for fallback review
    */
   async submitManualReceipt(dto: SubmitManualReceiptDto) {
-    let payment = dto.paymentToken
-      ? await this.prisma.cardPayment.findUnique({
-          where: { paymentToken: dto.paymentToken },
-        })
-      : null;
+    const targetOrderNumber = dto.orderNumber;
+    const targetOrderId = dto.orderId;
+
+    // 1. Expire any existing automatic inquiry / PENDING payment records for this order or token
+    if (targetOrderNumber || targetOrderId) {
+      await this.prisma.cardPayment.updateMany({
+        where: {
+          OR: [
+            ...(targetOrderNumber ? [{ orderNumber: targetOrderNumber }] : []),
+            ...(targetOrderId ? [{ orderId: targetOrderId }] : []),
+          ],
+          status: 'PENDING',
+        },
+        data: {
+          status: 'EXPIRED',
+        },
+      });
+    }
+
+    if (dto.paymentToken) {
+      await this.prisma.cardPayment.updateMany({
+        where: {
+          paymentToken: dto.paymentToken,
+          status: 'PENDING',
+        },
+        data: {
+          status: 'EXPIRED',
+        },
+      });
+    }
+
+    // 2. Find or create a dedicated MANUAL_REVIEW record for this order
+    let payment =
+      targetOrderNumber || targetOrderId
+        ? await this.prisma.cardPayment.findFirst({
+            where: {
+              OR: [
+                ...(targetOrderNumber ? [{ orderNumber: targetOrderNumber }] : []),
+                ...(targetOrderId ? [{ orderId: targetOrderId }] : []),
+              ],
+              status: 'MANUAL_REVIEW',
+            },
+            orderBy: { createdAt: 'desc' },
+          })
+        : null;
 
     if (!payment) {
-      // Create new manual payment record if initiated directly
+      // Create new manual payment record
       const token = `MANUAL-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
       payment = await this.prisma.cardPayment.create({
         data: {
@@ -373,7 +460,7 @@ export class CartBeCartService {
         },
       });
     } else {
-      // Update existing payment record to manual review
+      // Update existing manual review record
       payment = await this.prisma.cardPayment.update({
         where: { id: payment.id },
         data: {
@@ -399,7 +486,7 @@ export class CartBeCartService {
           await this.prisma.auditLog.create({
             data: {
               action: `ثبت دستی فیش واریزی سفارش #${order.orderNumber}`,
-              details: `کد پیگیری: ${dto.trackingCode} | مبلغ: ${new Intl.NumberFormat('fa-IR').format(dto.amountToman)} تومان | کارت: ${dto.userCardNumber || 'نامشخص'}`,
+              details: `کد پیگیری: ${dto.trackingCode} | مبلغ: ${new Intl.NumberFormat('fa-IR').format(dto.amountToman)} تومان | کارت: ${dto.userCardNumber || 'نامشخص'}. (درخواست قبلی استعلام خودکار منقضی شد)`,
               type: 'PAYMENT_RECEIPT_SUBMITTED',
               user: order.customerEmail || 'Customer',
             },
@@ -430,6 +517,9 @@ export class CartBeCartService {
     const where: any = {};
     if (params.status && params.status !== 'all') {
       where.status = params.status;
+    } else {
+      // By default when viewing all payments, exclude EXPIRED records so superseded requests do not clutter the list
+      where.status = { not: 'EXPIRED' };
     }
     if (params.type && params.type !== 'all') {
       where.paymentType = params.type;
@@ -506,6 +596,20 @@ export class CartBeCartService {
         adminPhone: adminUser.phone,
       },
     });
+
+    // Expire any lingering PENDING payment records for this order
+    if (payment.orderNumber) {
+      await this.prisma.cardPayment.updateMany({
+        where: {
+          orderNumber: payment.orderNumber,
+          status: 'PENDING',
+          id: { not: payment.id },
+        },
+        data: {
+          status: 'EXPIRED',
+        },
+      });
+    }
 
     return updated;
   }

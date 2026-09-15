@@ -59,3 +59,18 @@ export type LocalPaymentStatus =
   | 'REJECTED';
 
 export type PaymentType = 'ORDER' | 'WALLET_TOPUP';
+
+export interface CartBeCartShopConfigResponse {
+  shop_name: string;
+  plan: string;
+  subscription_active: boolean;
+  api_access: boolean;
+  order_ttl_minutes: number;
+  grace_minutes: number;
+  has_active_default_card: boolean;
+  quota?: {
+    used: number;
+    limit: number;
+    period_ends_at: string;
+  };
+}
