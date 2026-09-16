@@ -111,6 +111,26 @@ export class CartBeCartController {
   }
 
   /**
+   * User: Fetch own card payments / deposits history
+   */
+  @Get('user/:userId')
+  async getUserPayments(
+    @Param('userId') userId: string,
+    @Query('status') status?: string,
+    @Query('type') type?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const data = await this.cartBeCartService.getUserPayments(userId, {
+      status,
+      type,
+      page: page ? Number(page) : 1,
+      limit: limit ? Number(limit) : 20,
+    });
+    return ApiResponse.success(data);
+  }
+
+  /**
    * Admin: List all card payments
    */
   @Get('admin/payments')
@@ -119,6 +139,7 @@ export class CartBeCartController {
     @Query('role') roleFromQuery?: string,
     @Query('status') status?: string,
     @Query('type') type?: string,
+    @Query('userId') userId?: string,
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
@@ -129,6 +150,7 @@ export class CartBeCartController {
     const data = await this.cartBeCartService.getAdminPayments({
       status,
       type,
+      userId,
       search,
       page: page ? Number(page) : 1,
       limit: limit ? Number(limit) : 20,

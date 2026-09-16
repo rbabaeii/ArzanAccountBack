@@ -522,12 +522,33 @@ export class UsersService {
   }
 
   /**
-   * Admin: List all withdrawal requests with user balance breakdown
+   * Admin: List all withdrawal requests with user balance breakdown and filtering
    */
-  async getAdminWithdrawals(params?: { status?: string; limit?: number; offset?: number }) {
+  async getAdminWithdrawals(params?: {
+    status?: string;
+    userId?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }) {
     const where: any = {};
     if (params?.status && params.status !== 'all') {
       where.status = params.status;
+    }
+    if (params?.userId) {
+      where.userId = params.userId;
+    }
+    if (params?.search) {
+      const q = params.search.trim();
+      where.OR = [
+        { user: { name: { contains: q } } },
+        { user: { phone: { contains: q } } },
+        { user: { email: { contains: q } } },
+        { cardNumber: { contains: q } },
+        { sheba: { contains: q } },
+        { bankTrackingCode: { contains: q } },
+        { accountOwnerName: { contains: q } },
+      ];
     }
 
     const [requests, totalCount] = await Promise.all([

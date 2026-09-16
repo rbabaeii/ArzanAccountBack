@@ -508,11 +508,55 @@ export class CartBeCartService {
   }
 
   /**
-   * Get payments for admin review with filtering and pagination
+   * Get card payments / deposits for a specific user
+   */
+  async getUserPayments(
+    userId: string,
+    params?: {
+      status?: string;
+      type?: string;
+      page?: number;
+      limit?: number;
+    },
+  ) {
+    const page = Math.max(1, params?.page || 1);
+    const limit = Math.min(100, Math.max(1, params?.limit || 20));
+    const skip = (page - 1) * limit;
+
+    const where: any = { userId };
+    if (params?.status && params.status !== 'all') {
+      where.status = params.status;
+    }
+    if (params?.type && params.type !== 'all') {
+      where.paymentType = params.type;
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.cardPayment.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.cardPayment.count({ where }),
+    ]);
+
+    return {
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  /**
+   * Get payments for admin review with user enrichment, filtering, and pagination
    */
   async getAdminPayments(params: {
     status?: string;
     type?: string;
+    userId?: string;
     search?: string;
     page?: number;
     limit?: number;
@@ -528,16 +572,36 @@ export class CartBeCartService {
       // By default when viewing all payments, exclude EXPIRED records so superseded requests do not clutter the list
       where.status = { not: 'EXPIRED' };
     }
+
     if (params.type && params.type !== 'all') {
       where.paymentType = params.type;
     }
+
+    if (params.userId) {
+      where.userId = params.userId;
+    }
+
     if (params.search) {
       const q = params.search.trim();
+      // Also match users by name, phone, or email
+      const matchingUsers = await this.prisma.user.findMany({
+        where: {
+          OR: [
+            { name: { contains: q } },
+            { phone: { contains: q } },
+            { email: { contains: q } },
+          ],
+        },
+        select: { id: true },
+      });
+      const matchingUserIds = matchingUsers.map((u) => u.id);
+
       where.OR = [
         { orderNumber: { contains: q } },
         { trackingCode: { contains: q } },
         { userCardNumber: { contains: q } },
         { paymentToken: { contains: q } },
+        ...(matchingUserIds.length > 0 ? [{ userId: { in: matchingUserIds } }] : []),
       ];
     }
 
@@ -551,8 +615,31 @@ export class CartBeCartService {
       this.prisma.cardPayment.count({ where }),
     ]);
 
+    // Enrich payments with user profiles
+    const userIds = Array.from(new Set(items.map((i) => i.userId).filter(Boolean))) as string[];
+    const users =
+      userIds.length > 0
+        ? await this.prisma.user.findMany({
+            where: { id: { in: userIds } },
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+              email: true,
+              role: true,
+              walletBalanceToman: true,
+            },
+          })
+        : [];
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
+    const enrichedItems = items.map((item) => ({
+      ...item,
+      user: item.userId ? userMap.get(item.userId) || null : null,
+    }));
+
     return {
-      items,
+      items: enrichedItems,
       total,
       page,
       limit,

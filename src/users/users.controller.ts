@@ -90,6 +90,8 @@ export class UsersController {
   @Get('admin/withdrawals-list')
   async getAdminWithdrawals(
     @Query('status') status?: string,
+    @Query('userId') userId?: string,
+    @Query('search') search?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
     @Headers('authorization') authHeader?: string,
@@ -101,6 +103,8 @@ export class UsersController {
     }
     const result = await this.usersService.getAdminWithdrawals({
       status,
+      userId,
+      search,
       limit: limit ? Number(limit) : undefined,
       offset: offset ? Number(offset) : undefined,
     });
