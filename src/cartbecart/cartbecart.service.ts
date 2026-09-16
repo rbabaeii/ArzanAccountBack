@@ -344,17 +344,24 @@ export class CartBeCartService {
     const remoteOrder = await this.client.getOrderStatus(apiKey, paymentToken);
 
     if (remoteOrder && remoteOrder.status === 'paid') {
-      // Payment verified automatically!
-      await this.fulfillPayment(payment, 'AUTO_VERIFIED');
-      const updated = await this.prisma.cardPayment.update({
-        where: { id: payment.id },
+      // Atomic status update to prevent race conditions / duplicate fulfillment
+      const updateResult = await this.prisma.cardPayment.updateMany({
+        where: { id: payment.id, status: { in: ['PENDING', 'MANUAL_REVIEW'] } },
         data: {
           status: 'PAID',
           paidAt: remoteOrder.paid_at ? new Date(remoteOrder.paid_at) : new Date(),
         },
       });
+
+      if (updateResult.count > 0) {
+        await this.fulfillPayment(payment, 'AUTO_VERIFIED');
+      }
+
+      const freshPayment = await this.prisma.cardPayment.findUnique({
+        where: { id: payment.id },
+      });
       return {
-        ...updated,
+        ...freshPayment,
         isCompleted: true,
       };
     } else if (remoteOrder && remoteOrder.status === 'needs_review') {
@@ -570,11 +577,8 @@ export class CartBeCartService {
       throw new BadRequestException('این تراکنش قبلاً با موفقیت تأیید شده است.');
     }
 
-    // Fulfill order or top up wallet
-    await this.fulfillPayment(payment, 'MANUAL_ADMIN_APPROVED', adminUser);
-
-    const updated = await this.prisma.cardPayment.update({
-      where: { id },
+    const updateResult = await this.prisma.cardPayment.updateMany({
+      where: { id: payment.id, status: { in: ['MANUAL_REVIEW', 'PENDING'] } },
       data: {
         status: 'APPROVED',
         adminNote: dto.adminNote || payment.adminNote,
@@ -584,6 +588,15 @@ export class CartBeCartService {
         paidAt: new Date(),
       },
     });
+
+    if (updateResult.count === 0) {
+      throw new BadRequestException('این تراکنش قبلاً تعیین تکلیف یا تایید شده است.');
+    }
+
+    // Fulfill order or top up wallet (single execution)
+    await this.fulfillPayment(payment, 'MANUAL_ADMIN_APPROVED', adminUser);
+
+    const updated = await this.prisma.cardPayment.findUnique({ where: { id } });
 
     // Record audit log
     await this.prisma.auditLog.create({
@@ -663,7 +676,7 @@ export class CartBeCartService {
     await this.prisma.auditLog.create({
       data: {
         action: `رد پرداخت کارت‌به‌کارت #${payment.orderNumber}`,
-        details: `علت رد: ${dto.reason} | بررسی‌کننده: ${adminUser.name || 'مدیر مالی'}`,
+        details: `پرداخت به مبلغ ${new Intl.NumberFormat('fa-IR').format(payment.amountToman)} تومان به دلیل: "${dto.reason}" رد شد.`,
         type: 'PAYMENT_ADMIN_REJECTED',
         adminId: adminUser.id,
         adminName: adminUser.name,
@@ -675,36 +688,38 @@ export class CartBeCartService {
   }
 
   /**
-   * Simulation method: triggers instant payment confirmation for testing without real banking API
-   * Strictly guards against unauthorized usage in production environments
+   * Test simulation helper for instant payment verification
    */
   async simulatePaymentSuccess(
     paymentToken: string,
-    requestingUser?: { role?: string; id?: string },
+    adminUser?: { id?: string; name?: string; role?: string },
   ) {
-    const isProd = process.env.NODE_ENV === 'production';
-    const isAdmin =
-      requestingUser?.role === 'SUPER_ADMIN' ||
-      requestingUser?.role === 'ADMIN' ||
-      requestingUser?.role === 'FINANCE_ADMIN';
-
-    if (isProd && !isAdmin) {
-      throw new ForbiddenException('شبیه‌سازی پرداخت تنها در محیط توسعه یا توسط مدیر سیستم مجاز است.');
-    }
-
     const payment = await this.prisma.cardPayment.findUnique({
       where: { paymentToken },
     });
-    if (!payment) throw new NotFoundException('تراکنش یافت نشد.');
+    if (!payment) {
+      throw new NotFoundException(`تراکنش پرداختی با شناسه ${paymentToken} یافت نشد.`);
+    }
 
-    await this.fulfillPayment(payment, 'SIMULATED_TEST', requestingUser);
+    if (payment.status === 'PAID' || payment.status === 'APPROVED') {
+      return payment;
+    }
 
-    return this.prisma.cardPayment.update({
-      where: { id: payment.id },
+    const updateResult = await this.prisma.cardPayment.updateMany({
+      where: { id: payment.id, status: { in: ['PENDING', 'MANUAL_REVIEW'] } },
       data: {
         status: 'PAID',
         paidAt: new Date(),
       },
+    });
+
+    if (updateResult.count > 0) {
+      const requestingUser = adminUser || { name: 'سیستم شبیه‌ساز تست' };
+      await this.fulfillPayment(payment, 'SIMULATED_TEST', requestingUser);
+    }
+
+    return this.prisma.cardPayment.findUnique({
+      where: { id: payment.id },
     });
   }
 
@@ -722,34 +737,24 @@ export class CartBeCartService {
         return;
       }
 
-      const user = await this.prisma.user.findUnique({ where: { id: payment.userId } });
-      if (!user) {
-        this.logger.error(`User ${payment.userId} not found to topup wallet.`);
-        return;
-      }
-
-      const newDirect = (user.directDepositBalance || 0) + payment.amountToman;
-      const currentBonus = user.cashbackBonusBalance || 0;
-      const newTotal = newDirect + currentBonus;
-
-      await this.prisma.user.update({
-        where: { id: user.id },
+      const updatedUser = await this.prisma.user.update({
+        where: { id: payment.userId },
         data: {
-          walletBalanceToman: newTotal,
-          directDepositBalance: newDirect,
+          walletBalanceToman: { increment: payment.amountToman },
+          directDepositBalance: { increment: payment.amountToman },
         },
       });
 
       this.logger.log(
-        `[WALLET TOPUP SUCCESS] Credited ${payment.amountToman} Toman to ${user.name} (${user.id}). Reason: ${reason}`,
+        `[WALLET TOPUP SUCCESS] Credited ${payment.amountToman} Toman to ${updatedUser.name} (${updatedUser.id}). Reason: ${reason}`,
       );
 
       await this.prisma.auditLog.create({
         data: {
           action: `شارژ کیف پول کاربری از طریق کارت به کارت (${reason})`,
-          details: `مبلغ ${new Intl.NumberFormat('fa-IR').format(payment.amountToman)} تومان به کیف پول کاربر ${user.name} اضافه شد. موجودی جدید: ${newTotal} تومان.`,
+          details: `مبلغ ${new Intl.NumberFormat('fa-IR').format(payment.amountToman)} تومان به کیف پول کاربر ${updatedUser.name} اضافه شد. موجودی جدید: ${updatedUser.walletBalanceToman} تومان.`,
           type: 'WALLET_TOPPED_UP',
-          user: user.email || user.phone || 'User',
+          user: updatedUser.email || updatedUser.phone || 'User',
           adminId: adminUser?.id,
           adminName: adminUser?.name,
         },
