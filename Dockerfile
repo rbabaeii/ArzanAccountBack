@@ -23,6 +23,9 @@ RUN node scripts/switch-db.js postgres
 # Generate Prisma Client for PostgreSQL
 RUN npx prisma generate
 
+# Compile seed script to pure JS for robust container startup
+RUN npx tsc prisma/seed.ts --outDir prisma --module commonjs --target es2020 --moduleResolution node --skipLibCheck
+
 # Build NestJS application
 RUN rm -f tsconfig.tsbuildinfo && npm run build
 
@@ -48,5 +51,5 @@ COPY --from=builder /app/scripts ./scripts
 
 EXPOSE 4000
 
-# On container boot: auto push Prisma schema to PostgreSQL, then launch server
-CMD ["sh", "-c", "npx prisma db push && node -r ts-node/register ./prisma/seed.ts && node dist/main.js"]
+# On container boot: auto push Prisma schema to PostgreSQL, seed initial data, then launch server
+CMD ["sh", "-c", "npx prisma db push && (node prisma/seed.js || true) && node dist/main.js"]
