@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
+import { SmsService } from '../sms/sms.service';
 import { CatalogService } from '../catalog/catalog.service';
 import { CreateOrderDto, UpdateOrderStatusDto, ProcessRefundDto, RequestRefundDto, RejectRefundDto } from './orders.dto';
 
@@ -11,6 +12,7 @@ export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly smsService: SmsService,
     private readonly catalogService: CatalogService,
   ) {}
 
@@ -205,6 +207,24 @@ export class OrdersService {
       this.logger.error(`Background email error for order ${orderNumber}: ${err?.message}`);
     });
 
+    // Dispatch real SMS notification for order creation
+    const customerPhone = dto.customerPhone || order.customerPhone;
+    if (customerPhone) {
+      this.smsService
+        .sendOrderCreatedSms(
+          customerPhone,
+          orderNumber,
+          dto.totalPriceToman,
+          dto.customerEmail ? dto.customerEmail.split('@')[0] : 'کاربر گرامی',
+        )
+        .then((res) => {
+          if (res.success) {
+            this.logger.log(`[SMS ORDER] Sent order creation SMS for #${orderNumber} to ${customerPhone}`);
+          }
+        })
+        .catch((err) => this.logger.warn(`Failed to send order SMS: ${err?.message}`));
+    }
+
     return {
       ...order,
       items: dto.items,
@@ -311,6 +331,21 @@ export class OrdersService {
         }
       };
       sendActivationEmailAsync().catch((e) => this.logger.warn(`Async activation email error: ${e?.message}`));
+    }
+
+    if (isNowCompleted && order.customerPhone) {
+      this.smsService
+        .sendOrderCompletedSms(
+          order.customerPhone,
+          order.orderNumber,
+          (dto as any).accountCredentials || order.accountCredentials || 'اکانت شما با موفقیت فعال شد.',
+        )
+        .then((res) => {
+          if (res.success) {
+            this.logger.log(`[SMS ORDER] Sent order completion SMS for #${order.orderNumber} to ${order.customerPhone}`);
+          }
+        })
+        .catch((err) => this.logger.warn(`Failed to send order completion SMS: ${err?.message}`));
     }
 
     await this.prisma.auditLog.create({
@@ -493,6 +528,23 @@ export class OrdersService {
     };
     sendRefundEmailAsync().catch((err) => this.logger.warn(`Async processRefund email error: ${err?.message}`));
 
+    // Dispatch real SMS refund notification
+    if (order.customerPhone) {
+      this.smsService
+        .sendOrderRefundedSms(
+          order.customerPhone,
+          order.orderNumber,
+          dto.refundAmountToman,
+          trackingCode,
+        )
+        .then((res) => {
+          if (res.success) {
+            this.logger.log(`[SMS REFUND] Refund SMS sent to ${order.customerPhone}`);
+          }
+        })
+        .catch((err) => this.logger.warn(`Failed to send refund SMS: ${err?.message}`));
+    }
+
     await this.prisma.auditLog.create({
       data: {
         action: `تسویه و عودت وجه سفارش #${order.orderNumber} (${isWalletRefund ? 'به کیف پول سایت' : 'به حساب بانکی'})`,
@@ -529,6 +581,22 @@ export class OrdersService {
     // If order is back to completed/delivered, award referral cashback if eligible
     if (returnStatus === 'completed' || returnStatus === 'delivered') {
       await this.awardReferralCashbackIfEligible(updated);
+    }
+
+    // Dispatch real SMS rejection notification
+    if (order.customerPhone) {
+      this.smsService.getSmsConfig().then((cfg) => {
+        if (cfg.patternOrderRefunded) {
+          this.smsService
+            .sendPatternSms(
+              order.customerPhone!,
+              cfg.patternOrderRefunded,
+              [order.orderNumber, dto.rejectionReason || 'عدم تایید شرایط عودت'],
+              'refund_rejected',
+            )
+            .catch((err) => this.logger.warn(`Failed to send refund reject SMS: ${err?.message}`));
+        }
+      });
     }
 
     await this.prisma.auditLog.create({

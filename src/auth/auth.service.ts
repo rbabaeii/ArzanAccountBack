@@ -8,6 +8,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
+import { SmsService } from '../sms/sms.service';
 import { RedisService } from '../redis/redis.service';
 import * as bcrypt from 'bcryptjs';
 
@@ -26,6 +27,7 @@ export class AuthService implements OnApplicationBootstrap {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly emailService: EmailService,
+    private readonly smsService: SmsService,
     private readonly redisService: RedisService,
   ) {}
 
@@ -146,6 +148,18 @@ export class AuthService implements OnApplicationBootstrap {
     console.log(`⏰ Valid for 5 minutes (300 seconds) - Saved in Redis & Memory`);
     console.log(`======================================================================\n`);
 
+    // Dispatch real SMS using Payamak-Panel service
+    try {
+      const smsRes = await this.smsService.sendOtpSms(cleanPhone, otpCode);
+      if (smsRes.success) {
+        this.logger.log(`[AUTH PHONE OTP] SMS successfully dispatched to ${cleanPhone} (RecId: ${smsRes.recId})`);
+      } else {
+        this.logger.warn(`[AUTH PHONE OTP] SMS dispatch failed or pattern not set: ${smsRes.errorMessage}`);
+      }
+    } catch (smsErr: any) {
+      this.logger.error(`[AUTH PHONE OTP] Unexpected error dispatching SMS to ${cleanPhone}: ${smsErr?.message}`);
+    }
+
     return {
       success: true,
       message: 'کد تایید ۵ رقمی به شماره همراه شما ارسال شد.',
@@ -171,6 +185,19 @@ export class AuthService implements OnApplicationBootstrap {
     } catch (err: any) {
       this.logger.error(`Failed to send email OTP to ${cleanEmail}: ${err?.message}`);
       throw new BadRequestException('خطا در ارتباط با سرور ایمیل. لطفاً مجدداً تلاش فرمایید.');
+    }
+
+    // Also dispatch SMS OTP if user exists and has a registered phone number
+    try {
+      const existingUser = await this.prisma.user.findUnique({
+        where: { email: cleanEmail },
+      });
+      if (existingUser?.phone) {
+        await this.smsService.sendOtpSms(existingUser.phone, otpCode);
+        this.logger.log(`[AUTH EMAIL OTP] Also dispatched SMS OTP to registered phone ${existingUser.phone}`);
+      }
+    } catch (syncSmsErr: any) {
+      this.logger.warn(`Failed to dispatch sync SMS for email OTP: ${syncSmsErr?.message}`);
     }
 
     return {

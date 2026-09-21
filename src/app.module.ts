@@ -15,6 +15,7 @@ import { OrdersModule } from './orders/orders.module';
 import { SearchModule } from './search/search.module';
 import { RedisModule } from './redis/redis.module';
 import { CartBeCartModule } from './cartbecart/cartbecart.module';
+import { SmsModule } from './sms/sms.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { CartBeCartModule } from './cartbecart/cartbecart.module';
     AuthModule,
     MediaModule,
     EmailModule,
+    SmsModule,
     OrdersModule,
     SearchModule,
     RedisModule,

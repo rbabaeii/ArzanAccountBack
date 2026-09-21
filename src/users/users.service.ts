@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
+import { SmsService } from '../sms/sms.service';
 import {
   validateIranianCardNumber,
   validateIranianSheba,
@@ -16,6 +17,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly smsService: SmsService,
   ) {}
 
   async getUsers(params?: {
@@ -370,6 +372,12 @@ export class UsersService {
       },
     });
 
+    if (user.phone) {
+      this.smsService
+        .sendWalletTopupSms(user.phone, addAmount)
+        .catch((err) => this.logger.warn(`Failed to send wallet topup SMS to ${user.phone}: ${err?.message}`));
+    }
+
     return updated;
   }
 
@@ -654,6 +662,19 @@ export class UsersService {
           });
       }
 
+      // Send automated approval SMS to user
+      if (request.user?.phone) {
+        this.smsService
+          .sendWithdrawalApprovedSms(
+            request.user.phone,
+            request.amountToman,
+            trackingCode,
+          )
+          .catch((err) => {
+            this.logger.warn(`Failed to send withdrawal approval SMS to ${request.user.phone}: ${err?.message}`);
+          });
+      }
+
       return updatedRequest;
     } else {
       // REJECT: Rejection note is strictly required
@@ -715,6 +736,24 @@ export class UsersService {
           .catch((err) => {
             this.logger.warn(`Failed to send withdrawal rejection email to ${request.user.email}: ${err?.message}`);
           });
+      }
+
+      // Send automated rejection SMS to user
+      if (request.user?.phone) {
+        this.smsService.getSmsConfig().then((cfg) => {
+          if (cfg.patternWithdrawalApproved) {
+            this.smsService
+              .sendPatternSms(
+                request.user.phone!,
+                cfg.patternWithdrawalApproved,
+                [new Intl.NumberFormat('fa-IR').format(request.amountToman), rejectionReason],
+                'withdrawal_rejected',
+              )
+              .catch((err) => {
+                this.logger.warn(`Failed to send withdrawal rejection SMS to ${request.user.phone}: ${err?.message}`);
+              });
+          }
+        });
       }
 
       return updatedRequest;

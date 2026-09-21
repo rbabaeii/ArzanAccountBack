@@ -192,6 +192,21 @@ model EmailLog {
   createdAt    DateTime @default(now())
 }
 
+model SmsLog {
+  id           String   @id @default(cuid())
+  to           String
+  bodyId       Int?
+  text         String
+  status       String   @default("SENT") // SENT, FAILED
+  recId        String?
+  retStatus    Int?
+  strRetStatus String?
+  errorMessage String?
+  metadata     String?
+  template     String?
+  createdAt    DateTime @default(now())
+}
+
 model CardPayment {
   id                  String    @id @default(cuid())
   paymentToken        String    @unique

@@ -25,6 +25,8 @@ import {
   DEFAULT_FALLBACK_CARD,
 } from './cartbecart.constants';
 
+import { SmsService } from '../sms/sms.service';
+
 @Injectable()
 export class CartBeCartService {
   private readonly logger = new Logger(CartBeCartService.name);
@@ -33,6 +35,7 @@ export class CartBeCartService {
     private readonly prisma: PrismaService,
     private readonly client: CartBeCartClientService,
     private readonly emailService: EmailService,
+    private readonly smsService: SmsService,
     private readonly ordersService: OrdersService,
   ) {}
 
@@ -846,6 +849,13 @@ export class CartBeCartService {
           adminName: adminUser?.name,
         },
       });
+
+      // Dispatch SMS on successful wallet topup
+      if (updatedUser.phone) {
+        this.smsService
+          .sendWalletTopupSms(updatedUser.phone, payment.amountToman)
+          .catch((err) => this.logger.warn(`Failed to send wallet topup SMS to ${updatedUser.phone}: ${err?.message}`));
+      }
     } else {
       // Fulfill Order
       const order = await this.prisma.order.findFirst({
@@ -903,6 +913,18 @@ export class CartBeCartService {
         });
       } catch (emailErr) {
         this.logger.warn(`Failed to send order email for order #${order.orderNumber}: ${emailErr?.message}`);
+      }
+
+      // Dispatch real SMS on order payment confirmation
+      if (order.customerPhone) {
+        this.smsService
+          .sendOrderCreatedSms(
+            order.customerPhone,
+            order.orderNumber,
+            order.totalPriceToman,
+            order.customerEmail ? order.customerEmail.split('@')[0] : 'کاربر گرامی',
+          )
+          .catch((err) => this.logger.warn(`Failed to send order payment SMS: ${err?.message}`));
       }
     }
   }

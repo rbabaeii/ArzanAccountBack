@@ -13,6 +13,22 @@ async function main() {
     { key: 'LAST_SYNC_TIME', value: 'هم‌اکنون', description: 'زمان آخرین همگام‌سازی کاتالوگ' },
     { key: 'SITE_NAME', value: 'ارزان اکانت (arzanAccount)', description: 'نام رسمی فروشگاه' },
     { key: 'SUPPORT_TELEGRAM', value: '@arzan_support', description: 'پشتیبانی تلگرام' },
+    {
+      key: 'SMS_CONFIG',
+      value: JSON.stringify({
+        baseUrl: 'https://rest.payamak-panel.com/api/SendSMS/BaseServiceNumber',
+        apiKey: '5bf81d90-6683-45ee-ad78-afc1e55ac7d0',
+        username: '',
+        isEnabled: true,
+        patternOtp: 0,
+        patternOrderCreated: 0,
+        patternOrderCompleted: 0,
+        patternOrderRefunded: 0,
+        patternWithdrawalApproved: 0,
+        patternWalletTopup: 0,
+      }),
+      description: 'پیکربندی وب‌سرویس پیامکی خدماتی اشتراکی و کدهای الگو',
+    },
   ];
 
   for (const s of settings) {
