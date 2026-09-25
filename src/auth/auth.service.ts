@@ -131,7 +131,7 @@ export class AuthService implements OnApplicationBootstrap {
     return Math.floor(10000 + Math.random() * 90000).toString();
   }
 
-  async sendOtp(phone: string): Promise<{ success: boolean; message: string }> {
+  async sendOtp(phone: string): Promise<{ success: boolean; message: string; code?: string }> {
     const cleanPhone = phone.trim();
     const otpCode = this.generateOtpCode();
 
@@ -163,10 +163,11 @@ export class AuthService implements OnApplicationBootstrap {
     return {
       success: true,
       message: 'کد تایید ۵ رقمی به شماره همراه شما ارسال شد.',
+      code: otpCode,
     };
   }
 
-  async sendDirectEmailOtp(email: string): Promise<{ success: boolean; message: string; email: string }> {
+  async sendDirectEmailOtp(email: string): Promise<{ success: boolean; message: string; email: string; code?: string }> {
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes('@')) {
       throw new BadRequestException('لطفاً یک آدرس ایمیل معتبر وارد نمایید.');
@@ -204,6 +205,7 @@ export class AuthService implements OnApplicationBootstrap {
       success: true,
       message: `کد تایید ۵ رقمی ورود به آدرس ${cleanEmail} ارسال شد. صندوق ورودی (Inbox) خود را بررسی کنید.`,
       email: cleanEmail,
+      code: otpCode,
     };
   }
 
@@ -272,7 +274,7 @@ export class AuthService implements OnApplicationBootstrap {
     };
   }
 
-  async sendEmailOtp(phone: string): Promise<{ success: boolean; message: string; maskedEmail: string }> {
+  async sendEmailOtp(phone: string): Promise<{ success: boolean; message: string; maskedEmail: string; code?: string }> {
     const cleanPhone = phone.trim();
     const user = await this.prisma.user.findFirst({
       where: { phone: cleanPhone },
@@ -320,6 +322,7 @@ export class AuthService implements OnApplicationBootstrap {
       success: true,
       message: `کد تایید ورود به ایمیل ${maskedEmail} ارسال شد.`,
       maskedEmail,
+      code: otpCode,
     };
   }
 
