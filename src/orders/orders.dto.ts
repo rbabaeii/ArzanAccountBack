@@ -20,20 +20,34 @@ export class OrderItemDto {
   productId?: string;
 
   @IsString()
-  @IsNotEmpty()
-  productTitle: string;
+  @IsOptional()
+  productTitle?: string;
+
+  @IsString()
+  @IsOptional()
+  title?: string;
+
+  @IsString()
+  @IsOptional()
+  customTitle?: string;
 
   @IsNumber()
   @Min(1)
   quantity: number;
 
   @IsNumber()
+  @IsOptional()
   @Min(0)
-  priceToman: number;
+  priceToman?: number;
 
   @IsNumber()
+  @IsOptional()
   @Min(0)
-  priceUsd: number;
+  priceUsd?: number;
+
+  @IsNumber()
+  @IsOptional()
+  durationDays?: number;
 }
 
 export class AccountCredentialDto {
@@ -81,6 +95,10 @@ export class CreateOrderDto {
   @IsString()
   @IsOptional()
   paymentGateway?: string;
+
+  @IsString()
+  @IsOptional()
+  gateway?: string;
 
   @IsString()
   @IsOptional()

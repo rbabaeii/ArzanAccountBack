@@ -44,6 +44,16 @@ export class OrdersController {
       // Normal users are forced to view only their own orders
       filterEmail = user.email || undefined;
       filterPhone = user.phone || undefined;
+
+      if (!filterEmail && !filterPhone && user.id) {
+        const contact = await this.ordersService.getUserContact(user.id);
+        filterEmail = contact?.email || undefined;
+        filterPhone = contact?.phone || undefined;
+      }
+
+      if (!filterEmail && !filterPhone) {
+        return ApiResponse.success({ orders: [], totalCount: 0 });
+      }
     }
 
     const data = await this.ordersService.getOrders({
@@ -69,9 +79,18 @@ export class OrdersController {
   async getOrder(@Param('id') id: string, @CurrentUser() user: any) {
     const data = await this.ordersService.getOrderById(id);
     const isAdmin = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'SUPPORT_ADMIN', 'ADMIN'].includes(user.role);
-    const isOwner =
+    let isOwner =
       (user.email && data.customerEmail && user.email.toLowerCase() === data.customerEmail.toLowerCase()) ||
       (user.phone && data.customerPhone && user.phone === data.customerPhone);
+
+    if (!isAdmin && !isOwner && user.id) {
+      const contact = await this.ordersService.getUserContact(user.id);
+      if (contact) {
+        isOwner =
+          (contact.email && data.customerEmail && contact.email.toLowerCase() === data.customerEmail.toLowerCase()) ||
+          (contact.phone && data.customerPhone && contact.phone === data.customerPhone);
+      }
+    }
 
     if (!isAdmin && !isOwner) {
       throw new ForbiddenException('دسترسی غیرمجاز به اطلاعات سفارش کاربر دیگر.');
@@ -82,6 +101,10 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard)
   @Post()
   async createOrder(@Body() dto: CreateOrderDto, @CurrentUser() user: any) {
+    if (user && user.role === 'USER') {
+      if (user.email) dto.customerEmail = user.email;
+      if (user.phone && !dto.customerPhone) dto.customerPhone = user.phone;
+    }
     const order = await this.ordersService.createOrder(dto, user);
     return ApiResponse.success(order, 'سفارش با موفقیت ثبت شد.');
   }

@@ -243,7 +243,7 @@ export class CurrencySyncService implements OnApplicationBootstrap {
   }) {
     const user = data.user || 'مدیر سیستم';
 
-    if (data.apiKey !== undefined && data.apiKey.trim()) {
+    if (data.apiKey !== undefined && data.apiKey.trim() && !data.apiKey.includes('••')) {
       await this.settingsService.updateSetting('CURRENCY_API_KEY', data.apiKey.trim(), user);
     }
 

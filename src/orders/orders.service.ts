@@ -72,6 +72,14 @@ export class OrdersService {
     };
   }
 
+  async getUserContact(userId: string) {
+    if (!userId) return null;
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, phone: true },
+    });
+  }
+
   async createOrder(dto: CreateOrderDto, authenticatedUser?: any) {
     if (!dto.items || !Array.isArray(dto.items) || dto.items.length === 0) {
       throw new BadRequestException('سبد خرید خالی است یا آیتمی ارسال نشده است.');
@@ -120,6 +128,7 @@ export class OrdersService {
     // 2. Server-side coupon verification and discount application
     let discountAppliedToman = 0;
     let finalCalculatedToman = calculatedSubtotalToman;
+    let validatedCoupon: any = null;
 
     if (dto.couponCode) {
       try {
@@ -140,12 +149,7 @@ export class OrdersService {
         }
         discountAppliedToman = discount;
         finalCalculatedToman = Math.max(0, calculatedSubtotalToman - discount);
-
-        // Atomic usage count increment
-        await this.prisma.coupon.update({
-          where: { id: coupon.id },
-          data: { usageCount: { increment: 1 } },
-        });
+        validatedCoupon = coupon;
       } catch (couponErr: any) {
         throw new BadRequestException(couponErr?.message || 'کد تخفیف نامعتبر یا منقضی شده است.');
       }
@@ -163,7 +167,6 @@ export class OrdersService {
 
     const orderNumber = dto.orderNumber || `ORD-${Math.floor(100000 + Math.random() * 900000)}`;
 
-    const firstProductTitle = dto.items?.[0]?.productTitle || 'اشتراک دیجیتال';
     const isHybrid = Boolean(dto.isHybridOrder);
     let deliveryType = dto.deliveryType || 'link';
     if (dto.targetAccountEmail || dto.targetAccountPassword || (dto.accountCredentials && dto.accountCredentials.length > 0)) {
@@ -172,55 +175,79 @@ export class OrdersService {
 
     // Initial status MUST always start as pending (CRIT-02)
     const status = 'pending';
+    const paymentGateway = dto.paymentGateway || dto.gateway || 'cartbecart';
 
-    const order = await this.prisma.order.create({
-      data: {
-        orderNumber,
-        customerEmail: dto.customerEmail,
-        customerPhone: dto.customerPhone || null,
-        customerLink: dto.customerLink || null,
-        totalPriceToman: finalCalculatedToman,
-        totalPriceUsd: calculatedSubtotalUsd,
-        status,
-        deliveryType,
-        targetAccountEmail: dto.targetAccountEmail || dto.accountCredentials?.[0]?.email || null,
-        targetAccountPassword: dto.targetAccountPassword || dto.accountCredentials?.[0]?.password || null,
-        accountCredentials: dto.accountCredentials ? JSON.stringify(dto.accountCredentials) : null,
-        isHybridOrder: isHybrid,
-        instantItemsCount: dto.instantItemsCount || 0,
-        activationItemsCount: dto.activationItemsCount || 0,
-        items: JSON.stringify(dto.items || []),
-        deliveredAccounts: null, // CRIT-02: Never accept/store delivered accounts before payment verification
-        paymentGateway: dto.paymentGateway || 'cartbecart',
-        couponCode: dto.couponCode || null,
-        discountAppliedToman,
-      },
-    });
-
-    // Decrement local inventory stock where applicable
-    for (const item of dto.items) {
-      const productId = item.productId || item.id;
-      const requestedQty = Number(item.quantity) || 1;
-      try {
-        const prod = await this.prisma.product.findFirst({
+    const order = await this.prisma.$transaction(async (tx) => {
+      // Atomic usage count increment with capacity guard to prevent race conditions & burning on failed orders
+      if (validatedCoupon) {
+        const updateRes = await tx.coupon.updateMany({
           where: {
-            OR: [{ id: String(productId) }, { externalId: isNaN(Number(productId)) ? -1 : Number(productId) }],
+            id: validatedCoupon.id,
+            isActive: true,
+            OR: [
+              { maxUsage: null },
+              { usageCount: { lt: validatedCoupon.maxUsage } },
+            ],
           },
+          data: { usageCount: { increment: 1 } },
         });
-        if (prod && prod.stockCount !== null) {
-          const newStock = Math.max(0, prod.stockCount - requestedQty);
-          await this.prisma.product.update({
-            where: { id: prod.id },
-            data: {
-              stockCount: newStock,
-              inStock: newStock > 0,
+
+        if (updateRes.count === 0) {
+          throw new BadRequestException('ظرفیت استفاده از این کد تخفیف در حین ثبت سفارش به پایان رسید.');
+        }
+      }
+
+      const createdOrder = await tx.order.create({
+        data: {
+          orderNumber,
+          customerEmail: dto.customerEmail,
+          customerPhone: dto.customerPhone || null,
+          customerLink: dto.customerLink || null,
+          totalPriceToman: finalCalculatedToman,
+          totalPriceUsd: calculatedSubtotalUsd,
+          status,
+          deliveryType,
+          targetAccountEmail: dto.targetAccountEmail || dto.accountCredentials?.[0]?.email || null,
+          targetAccountPassword: dto.targetAccountPassword || dto.accountCredentials?.[0]?.password || null,
+          accountCredentials: dto.accountCredentials ? JSON.stringify(dto.accountCredentials) : null,
+          isHybridOrder: isHybrid,
+          instantItemsCount: dto.instantItemsCount || 0,
+          activationItemsCount: dto.activationItemsCount || 0,
+          items: JSON.stringify(dto.items || []),
+          deliveredAccounts: null, // CRIT-02: Never accept/store delivered accounts before payment verification
+          paymentGateway,
+          couponCode: dto.couponCode || null,
+          discountAppliedToman,
+        },
+      });
+
+      // Decrement local inventory stock where applicable
+      for (const item of dto.items) {
+        const productId = item.productId || item.id;
+        const requestedQty = Number(item.quantity) || 1;
+        try {
+          const prod = await tx.product.findFirst({
+            where: {
+              OR: [{ id: String(productId) }, { externalId: isNaN(Number(productId)) ? -1 : Number(productId) }],
             },
           });
+          if (prod && prod.stockCount !== null) {
+            const newStock = Math.max(0, prod.stockCount - requestedQty);
+            await tx.product.update({
+              where: { id: prod.id },
+              data: {
+                stockCount: newStock,
+                inStock: newStock > 0,
+              },
+            });
+          }
+        } catch (stockErr: any) {
+          this.logger.warn(`Failed to decrement local stock for product ${productId}: ${stockErr?.message}`);
         }
-      } catch (stockErr) {
-        this.logger.warn(`Failed to decrement local stock for product ${productId}: ${stockErr?.message}`);
       }
-    }
+
+      return createdOrder;
+    });
 
     // 3. Referral Cashback: Strictly awarded ONLY when the order is confirmed completed/delivered.
     try {
@@ -232,6 +259,9 @@ export class OrdersService {
     }
 
     // Trigger non-blocking transactional email in background (never block HTTP response)
+    const firstProductTitle =
+      dto.items[0]?.productTitle || dto.items[0]?.title || dto.items[0]?.customTitle || 'محصول دیجیتال';
+
     (async () => {
       try {
         // Do not dispatch product delivery emails for unpaid pending orders
@@ -246,7 +276,13 @@ export class OrdersService {
             customerEmail: dto.customerEmail,
             customerPhone: dto.customerPhone,
             createdAt: new Intl.DateTimeFormat('fa-IR', { dateStyle: 'full', timeStyle: 'short' }).format(new Date()),
-            items: dto.items || [],
+            items: (dto.items || []).map((it) => ({
+              productTitle: it.productTitle || it.title || it.customTitle || 'محصول دیجیتال',
+              quantity: it.quantity,
+              priceToman: it.priceToman,
+              priceUsd: it.priceUsd,
+              durationDays: it.durationDays,
+            })),
             deliveredAccounts: dto.deliveredAccounts || [],
             accountCredentials: dto.accountCredentials || [],
             isHybridOrder: true,

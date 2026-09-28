@@ -71,10 +71,10 @@ export class CartBeCartController {
     @CurrentUser() adminUser: any,
   ) {
     if (
-      process.env.ENABLE_PAYMENT_SIMULATION !== 'true' &&
-      process.env.NODE_ENV === 'production'
+      process.env.NODE_ENV === 'production' ||
+      process.env.ENABLE_PAYMENT_SIMULATION !== 'true'
     ) {
-      throw new ForbiddenException('شبیه‌سازی پرداخت در محیط عملیاتی غیرفعال است.');
+      throw new ForbiddenException('شبیه‌سازی پرداخت در این محیط غیرفعال است.');
     }
     const admin = {
       id: adminUser.id || adminUser.sub,

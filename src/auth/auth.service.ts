@@ -441,6 +441,7 @@ export class AuthService implements OnApplicationBootstrap {
     // Generate JWT token
     const payload = {
       sub: user.id,
+      email: user.email,
       phone: user.phone,
       role: user.role,
       name: user.name,
@@ -545,6 +546,7 @@ export class AuthService implements OnApplicationBootstrap {
 
     const payload = {
       sub: user.id,
+      email: user.email,
       phone: user.phone,
       role: user.role,
       name: user.name,

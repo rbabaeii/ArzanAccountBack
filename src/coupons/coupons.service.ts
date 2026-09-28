@@ -117,7 +117,7 @@ export class CouponsService {
     }
 
     if (coupon.allowedUserIds) {
-      let allowed: string[] = [];
+      let allowed: any[] = [];
       try {
         allowed = typeof coupon.allowedUserIds === 'string'
           ? JSON.parse(coupon.allowedUserIds)
@@ -130,11 +130,57 @@ export class CouponsService {
         if (!authenticatedUserId && !userPhone) {
           throw new BadRequestException('برای استفاده از این کد تخفیف اختصاصی، ابتدا باید وارد حساب کاربری خود شوید.');
         }
-        const matchesUser =
-          (authenticatedUserId && allowed.includes(authenticatedUserId)) ||
-          (userPhone && allowed.includes(userPhone));
+
+        let userEmail: string | undefined;
+        let resolvedPhone: string | undefined = userPhone;
+
+        if (authenticatedUserId && this.prisma.user) {
+          const userRec = await this.prisma.user.findUnique({ where: { id: authenticatedUserId } });
+          if (userRec) {
+            userEmail = userRec.email || undefined;
+            if (!resolvedPhone) resolvedPhone = userRec.phone || undefined;
+          }
+        }
+
+        const matchesUser = allowed.some((target: any) => {
+          if (typeof target === 'string') {
+            return (
+              (authenticatedUserId && target === authenticatedUserId) ||
+              (resolvedPhone && target === resolvedPhone) ||
+              (userEmail && target.toLowerCase() === userEmail.toLowerCase())
+            );
+          }
+          if (typeof target === 'object' && target !== null) {
+            return (
+              (authenticatedUserId && target.id === authenticatedUserId) ||
+              (resolvedPhone && target.phone === resolvedPhone) ||
+              (userEmail && target.email && target.email.toLowerCase() === userEmail.toLowerCase())
+            );
+          }
+          return false;
+        });
+
         if (!matchesUser) {
           throw new BadRequestException('این کد تخفیف مختص کاربران منتخب صادر گردیده است.');
+        }
+
+        // Per-user usage limit: Prevent re-use of user-restricted coupons across orders
+        const searchConditions: any[] = [];
+        if (resolvedPhone) searchConditions.push({ customerPhone: resolvedPhone });
+        if (userEmail) searchConditions.push({ customerEmail: userEmail });
+
+        if (searchConditions.length > 0) {
+          const existingOrder = await this.prisma.order.findFirst({
+            where: {
+              couponCode: coupon.code,
+              status: { notIn: ['cancelled', 'refunded'] },
+              OR: searchConditions,
+            },
+          });
+
+          if (existingOrder) {
+            throw new BadRequestException('شما پیش‌تر از این کد تخفیف اختصاصی استفاده نموده‌اید.');
+          }
         }
       }
     }

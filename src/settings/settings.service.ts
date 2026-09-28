@@ -47,7 +47,7 @@ export class SettingsService {
       maxPurchaseRatioDenominator,
       purchaseRatioExemptionThreshold,
       orderCashbackPercent: isNaN(orderCashbackPercent) || orderCashbackPercent < 0 ? 10 : orderCashbackPercent,
-      currencyApiKey,
+      currencyApiKey: currencyApiKey ? '••••••••' + (currencyApiKey.length > 4 ? currencyApiKey.slice(-4) : '') : '',
       currencySyncIntervalMinutes: isNaN(currencySyncIntervalMinutes) || currencySyncIntervalMinutes < 1 ? 15 : currencySyncIntervalMinutes,
       enableCurrencyAutoSync,
       lastCurrencySyncTime,

@@ -4,11 +4,16 @@ import { UnauthorizedException, ForbiddenException, BadRequestException } from '
 import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
 import { RolesGuard } from '../src/common/guards/roles.guard';
 import { ROLES_KEY } from '../src/common/decorators/roles.decorator';
+import { AuthService } from '../src/auth/auth.service';
+import { OrdersService } from '../src/orders/orders.service';
+import { CouponsService } from '../src/coupons/coupons.service';
+import { CartBeCartController } from '../src/cartbecart/cartbecart.controller';
+import { SettingsService } from '../src/settings/settings.service';
 import * as bcrypt from 'bcryptjs';
 
 async function runVerification() {
   console.log('====================================================');
-  console.log('🛡️  ARZAN ACCOUNT SECURITY VERIFICATION TEST SUITE');
+  console.log('🛡️  ARZAN ACCOUNT DEEP SECURITY VERIFICATION SUITE');
   console.log('====================================================\n');
 
   let passed = 0;
@@ -51,12 +56,11 @@ async function runVerification() {
   }
 
   // ----------------------------------------------------
-  // TEST 2: JwtAuthGuard with forged/tampered token (decode bypass test)
+  // TEST 2: JwtAuthGuard with forged/tampered token
   // ----------------------------------------------------
   {
     const reflector = new Reflector();
     const guard = new JwtAuthGuard(jwtService, reflector);
-    // Attacker crafts forged JWT signed with wrong secret or manipulated payload
     const forgedToken = new JwtService({ secret: 'attacker-fake-secret' }).sign({
       sub: 'hacker-1',
       role: 'SUPER_ADMIN',
@@ -162,153 +166,364 @@ async function runVerification() {
   }
 
   // ----------------------------------------------------
-  // TEST 6: Password bypass fix logic
+  // TEST 6: Real AuthService.updatePassword logic
   // ----------------------------------------------------
   {
     const existingPasswordHash = bcrypt.hashSync('ExistingSecurePassword123', 10);
-    const userWithPassword = { password: existingPasswordHash };
+    const mockUser = {
+      id: 'usr-1',
+      phone: '09123456789',
+      password: existingPasswordHash,
+    };
 
-    // Scenario A: currentPassword not provided -> MUST throw BadRequestException
+    const mockPrisma: any = {
+      user: {
+        findUnique: jestFn(async (args: any) => {
+          if (args.where.id === 'usr-1') return mockUser;
+          return null;
+        }),
+        update: jestFn(async (args: any) => args.data),
+      },
+      auditLog: {
+        create: jestFn(async () => ({})),
+      },
+    };
+
+    const authService = new AuthService(
+      mockPrisma,
+      jwtService,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+    // Scenario A: current password omitted
     let scenarioAThrew = false;
     try {
-      const currentPasswordRaw: string | undefined = undefined;
-      if (userWithPassword.password) {
-        if (!currentPasswordRaw) {
-          throw new BadRequestException('وارد کردن رمز عبور فعلی جهت تغییر رمز الزامی است.');
-        }
-        const isCurrentValid = bcrypt.compareSync(currentPasswordRaw, userWithPassword.password);
-        if (!isCurrentValid) {
-          throw new BadRequestException('رمز عبور فعلی وارد شده نادرست است.');
-        }
-      }
+      await authService.updatePassword('usr-1', 'NewPassword123', undefined);
     } catch (e: any) {
       scenarioAThrew = e instanceof BadRequestException && e.message.includes('الزامی');
     }
-    assert('Password update rejects request when current password is omitted', scenarioAThrew);
+    assert('Real AuthService.updatePassword rejects when current password is omitted', scenarioAThrew);
 
-    // Scenario B: wrong current password provided -> MUST throw BadRequestException
+    // Scenario B: wrong current password provided
     let scenarioBThrew = false;
     try {
-      const currentPasswordRaw = 'WrongPassword';
-      if (userWithPassword.password) {
-        if (!currentPasswordRaw) {
-          throw new BadRequestException('وارد کردن رمز عبور فعلی جهت تغییر رمز الزامی است.');
-        }
-        const isCurrentValid = bcrypt.compareSync(currentPasswordRaw, userWithPassword.password);
-        if (!isCurrentValid) {
-          throw new BadRequestException('رمز عبور فعلی وارد شده نادرست است.');
-        }
-      }
+      await authService.updatePassword('usr-1', 'NewPassword123', 'WrongCurrentPassword');
     } catch (e: any) {
       scenarioBThrew = e instanceof BadRequestException && e.message.includes('نادرست');
     }
-    assert('Password update rejects incorrect current password', scenarioBThrew);
+    assert('Real AuthService.updatePassword rejects incorrect current password', scenarioBThrew);
 
-    // Scenario C: correct current password provided -> passes
+    // Scenario C: correct current password provided
     let scenarioCSuccess = false;
     try {
-      const currentPasswordRaw = 'ExistingSecurePassword123';
-      if (userWithPassword.password) {
-        if (!currentPasswordRaw) {
-          throw new BadRequestException('وارد کردن رمز عبور فعلی جهت تغییر رمز الزامی است.');
-        }
-        const isCurrentValid = bcrypt.compareSync(currentPasswordRaw, userWithPassword.password);
-        if (!isCurrentValid) {
-          throw new BadRequestException('رمز عبور فعلی وارد شده نادرست است.');
-        }
-      }
-      scenarioCSuccess = true;
+      const res = await authService.updatePassword('usr-1', 'NewSecurePassword456', 'ExistingSecurePassword123');
+      scenarioCSuccess = res.success === true;
     } catch {}
-    assert('Password update succeeds when correct current password is supplied', scenarioCSuccess);
+    assert('Real AuthService.updatePassword succeeds when correct password is provided', scenarioCSuccess);
   }
 
   // ----------------------------------------------------
-  // TEST 7: Order price tampering guard logic
+  // TEST 7: Real OrdersService price tampering guard
   // ----------------------------------------------------
   {
-    const serverCalculatedToman = 450000;
-    const tamperedClientPrice = 1000; // Attacker changed price from 450,000 to 1,000 Toman
-
-    let tamperCaught = false;
-    try {
-      if (Math.abs(serverCalculatedToman - tamperedClientPrice) > 500) {
-        throw new BadRequestException('مبلغ سفارش با قیمت‌های روز سامانه همخوانی ندارد.');
-      }
-    } catch (e: any) {
-      tamperCaught = e instanceof BadRequestException;
-    }
-    assert('Order price tampering is strictly rejected when client sends manipulated price', tamperCaught);
-  }
-
-  // ----------------------------------------------------
-  // TEST 8: Refund limit and duplicate refund prevention logic
-  // ----------------------------------------------------
-  {
-    const order = { id: 'ord-101', status: 'refunded', totalPriceToman: 200000 };
-
-    let duplicateRefundCaught = false;
-    try {
-      if (order.status === 'refunded') {
-        throw new BadRequestException('این سفارش پیش‌تر تسویه و عودت داده شده است.');
-      }
-    } catch (e: any) {
-      duplicateRefundCaught = e instanceof BadRequestException;
-    }
-    assert('Duplicate refund on already-refunded order is rejected', duplicateRefundCaught);
-
-    const activeOrder = { id: 'ord-102', status: 'delivered', totalPriceToman: 200000 };
-    let excessiveRefundCaught = false;
-    const requestedRefundAmount = 50000000; // 50M Toman on 200K order
-    try {
-      if (requestedRefundAmount > activeOrder.totalPriceToman || requestedRefundAmount <= 0) {
-        throw new BadRequestException('مبلغ عودت وجه نامعتبر بوده یا از مبلغ کل سفارش بیشتر است.');
-      }
-    } catch (e: any) {
-      excessiveRefundCaught = e instanceof BadRequestException;
-    }
-    assert('Excessive refund exceeding order total amount is rejected', excessiveRefundCaught);
-  }
-
-  // ----------------------------------------------------
-  // TEST 9: Coupon user restriction validation logic
-  // ----------------------------------------------------
-  {
-    const restrictedCoupon = {
-      code: 'VIP50',
-      allowedUserIds: JSON.stringify(['vip-user-1', '09120000000']),
+    const mockProduct = {
+      id: 'prod-1',
+      title: 'Spotify Premium 1 Month',
+      priceToman: 450000,
+      salePriceToman: 450000,
+      costPriceUsd: 5.5,
+      retailPriceUsd: 6.0,
+      inStock: true,
+      stockCount: 10,
+      type: 'instant',
     };
 
-    let unauthorizedUserRejected = false;
-    const hackerUserId = 'hacker-99';
-    const hackerPhone = '09359999999';
+    const mockPrisma: any = {
+      product: {
+        findFirst: jestFn(async () => mockProduct),
+        findUnique: jestFn(async () => mockProduct),
+        update: jestFn(async () => mockProduct),
+      },
+      user: {
+        findUnique: jestFn(async () => null),
+      },
+      order: {
+        create: jestFn(async (args: any) => args.data),
+      },
+      $transaction: jestFn(async (cb: any) => cb(mockPrisma)),
+    };
 
+    const mockCatalogService: any = {
+      validateLiveStock: jestFn(async () => true),
+    };
+    const mockPricingService: any = {
+      calculatePrice: jestFn(async () => ({ finalToman: 450000 })),
+    };
+
+    const ordersService = new OrdersService(
+      mockPrisma,
+      {} as any,
+      {} as any,
+      mockCatalogService,
+      mockPricingService,
+      {} as any,
+    );
+
+    let priceTamperCaught = false;
     try {
-      const allowed: string[] = JSON.parse(restrictedCoupon.allowedUserIds);
-      const matches = allowed.includes(hackerUserId) || allowed.includes(hackerPhone);
-      if (!matches) {
-        throw new BadRequestException('این کد تخفیف مختص کاربران منتخب صادر گردیده است.');
-      }
+      await ordersService.createOrder({
+        customerEmail: 'test@example.com',
+        customerPhone: '09121112233',
+        totalPriceToman: 1000, // Attacker forged price from 450,000 to 1,000
+        items: [
+          {
+            productId: 'prod-1',
+            quantity: 1,
+            priceToman: 1000,
+          },
+        ],
+      } as any);
     } catch (e: any) {
-      unauthorizedUserRejected = e instanceof BadRequestException;
+      priceTamperCaught = e instanceof BadRequestException && e.message.includes('همخوانی ندارد');
     }
-    assert('User-restricted coupon rejects unauthorized buyer ID/phone', unauthorizedUserRejected);
+    assert('Real OrdersService strictly rejects order when client tampers with prices', priceTamperCaught);
   }
 
   // ----------------------------------------------------
-  // TEST 10: SVG file extension & MIME type rejection
+  // TEST 8: Real OrdersService atomic coupon exhaustion check
   // ----------------------------------------------------
   {
-    const allowedMimes = ['image/jpeg', 'image/png', 'image/webp'];
+    const mockProduct = {
+      id: 'prod-1',
+      title: 'Spotify 1M',
+      priceToman: 100000,
+      salePriceToman: 100000,
+      costPriceUsd: 2.0,
+      retailPriceUsd: 2.5,
+      inStock: true,
+      stockCount: 5,
+    };
+
+    const mockPrisma: any = {
+      product: {
+        findFirst: jestFn(async () => mockProduct),
+        findUnique: jestFn(async () => mockProduct),
+        update: jestFn(async () => mockProduct),
+      },
+      coupon: {
+        findUnique: jestFn(async () => ({
+          id: 'coup-1',
+          code: 'SALE10',
+          discountPercent: 10,
+          isActive: true,
+          maxUsage: 5,
+          usageCount: 5, // Fully exhausted!
+        })),
+        updateMany: jestFn(async () => ({ count: 0 })), // Atomic update fails because usageCount < maxUsage is false
+      },
+      user: {
+        findUnique: jestFn(async () => null),
+      },
+      order: {
+        create: jestFn(async (args: any) => args.data),
+      },
+      $transaction: jestFn(async (cb: any) => cb(mockPrisma)),
+    };
+
+    const mockCatalogService: any = {
+      validateLiveStock: jestFn(async () => true),
+    };
+    const mockPricingService: any = {
+      calculatePrice: jestFn(async () => ({ finalToman: 100000 })),
+    };
+
+    const mockCouponsService: any = {
+      validateCoupon: jestFn(async () => ({
+        success: true,
+        coupon: { id: 'coup-1', code: 'SALE10', maxUsage: 5, usageCount: 5, discountPercent: 10 },
+      })),
+    };
+
+    const ordersService = new OrdersService(
+      mockPrisma,
+      {} as any,
+      {} as any,
+      mockCatalogService,
+      mockPricingService,
+      mockCouponsService,
+    );
+
+    let couponExhaustionCaught = false;
+    try {
+      await ordersService.createOrder({
+        customerEmail: 'buyer@example.com',
+        customerPhone: '09123334455',
+        totalPriceToman: 90000,
+        couponCode: 'SALE10',
+        items: [{ productId: 'prod-1', quantity: 1, priceToman: 100000 }],
+      } as any);
+    } catch (e: any) {
+      couponExhaustionCaught =
+        e instanceof BadRequestException &&
+        (e.message.includes('ظرفیت استفاده') || e.message.includes('سقف استفاده'));
+    }
+    assert('Real OrdersService rejects exhausted coupon inside atomic transaction without burning', couponExhaustionCaught);
+  }
+
+  // ----------------------------------------------------
+  // TEST 9: Real CouponsService per-user limit & allowedUserIds check
+  // ----------------------------------------------------
+  {
+    const mockPrisma: any = {
+      user: {
+        findUnique: jestFn(async () => null),
+      },
+      coupon: {
+        findUnique: jestFn(async (args: any) => {
+          if (args.where.code === 'VIPONLY') {
+            return {
+              id: 'c-vip',
+              code: 'VIPONLY',
+              discountPercent: 20,
+              isActive: true,
+              maxUsage: 100,
+              usageCount: 0,
+              maxUsagePerUser: 1,
+              allowedUserIds: JSON.stringify([{ id: 'vip-user-1', label: 'VIP Customer' }]),
+            };
+          }
+          return null;
+        }),
+      },
+      order: {
+        findFirst: jestFn(async (args: any) => {
+          if (
+            args.where.customerPhone === '09128888888' ||
+            args.where.OR?.some((c: any) => c.customerPhone === '09128888888')
+          ) {
+            return { id: 'prev-order-1' }; // User already used it
+          }
+          return null;
+        }),
+      },
+    };
+
+    const couponsService = new CouponsService(mockPrisma);
+
+    // Scenario A: Unauthorized user
+    let unauthCaught = false;
+    try {
+      await couponsService.validateCoupon('VIPONLY', 'regular-user-2', '09127777777');
+    } catch (e: any) {
+      unauthCaught = e instanceof BadRequestException && e.message.includes('مختص کاربران منتخب');
+    }
+    assert('Real CouponsService rejects user not matching allowedUserIds target objects', unauthCaught);
+
+    // Scenario B: Authorized user matches object ID
+    let authValid = false;
+    try {
+      const res = await couponsService.validateCoupon('VIPONLY', 'vip-user-1', '09129999999');
+      authValid = res.success === true && res.coupon?.discountPercent === 20;
+    } catch (err: any) {
+      console.error('Scenario B unexpected error:', err);
+    }
+    assert('Real CouponsService allows user matching object array allowedUserIds', authValid);
+
+    // Scenario C: User already used coupon (exceeding maxUsagePerUser)
+    let perUserLimitCaught = false;
+    try {
+      await couponsService.validateCoupon('VIPONLY', 'vip-user-1', '09128888888');
+    } catch (e: any) {
+      perUserLimitCaught = e instanceof BadRequestException && e.message.includes('استفاده');
+    }
+    assert('Real CouponsService blocks reuse when user has reached maxUsagePerUser', perUserLimitCaught);
+  }
+
+  // ----------------------------------------------------
+  // TEST 10: Real CartBeCartController simulation guard
+  // ----------------------------------------------------
+  {
+    const mockCartBeCartService: any = {
+      simulatePaymentSuccess: jestFn(async () => ({ success: true, simulated: true })),
+    };
+    const controller = new CartBeCartController(mockCartBeCartService);
+
+    const savedEnv = process.env.NODE_ENV;
+    const savedSim = process.env.ENABLE_PAYMENT_SIMULATION;
+
+    // Subtest A: Forbidden in production even if ENABLE_PAYMENT_SIMULATION is true
+    process.env.NODE_ENV = 'production';
+    process.env.ENABLE_PAYMENT_SIMULATION = 'true';
+    let prodBlocked = false;
+    try {
+      await controller.simulateSuccess('token-1', { id: 'admin-1', role: 'SUPER_ADMIN' });
+    } catch (e: any) {
+      prodBlocked = e instanceof ForbiddenException;
+    }
+    assert('CartBeCartController strictly blocks simulate-success in production environment', prodBlocked);
+
+    // Subtest B: Forbidden when ENABLE_PAYMENT_SIMULATION is not 'true'
+    process.env.NODE_ENV = 'development';
+    process.env.ENABLE_PAYMENT_SIMULATION = 'false';
+    let devDisabledBlocked = false;
+    try {
+      await controller.simulateSuccess('token-1', { id: 'admin-1', role: 'SUPER_ADMIN' });
+    } catch (e: any) {
+      devDisabledBlocked = e instanceof ForbiddenException;
+    }
+    assert('CartBeCartController blocks simulate-success when ENABLE_PAYMENT_SIMULATION !== "true"', devDisabledBlocked);
+
+    // Subtest C: Allowed in dev when enabled
+    process.env.NODE_ENV = 'development';
+    process.env.ENABLE_PAYMENT_SIMULATION = 'true';
+    let devAllowed = false;
+    try {
+      const res = await controller.simulateSuccess('token-1', { id: 'admin-1', role: 'SUPER_ADMIN' });
+      devAllowed = res.success === true;
+    } catch {}
+    assert('CartBeCartController allows simulate-success only when dev and explicitly enabled', devAllowed);
+
+    // Restore env
+    process.env.NODE_ENV = savedEnv;
+    process.env.ENABLE_PAYMENT_SIMULATION = savedSim;
+  }
+
+  // ----------------------------------------------------
+  // TEST 11: Real SettingsService masks currency API key
+  // ----------------------------------------------------
+  {
+    const mockPrisma: any = {
+      systemSetting: {
+        findMany: jestFn(async () => [
+          { key: 'USD_TO_RIAL_RATE', value: '720000' },
+          { key: 'CURRENCY_API_KEY', value: 'super-secret-api-key-xyz123' },
+        ]),
+      },
+    };
+
+    const settingsService = new SettingsService(mockPrisma);
+    const settings = await settingsService.getAllSettings();
+
+    const isMasked = settings.currencyApiKey.startsWith('••••••••') && !settings.currencyApiKey.includes('super-secret');
+    assert('Real SettingsService masks CURRENCY_API_KEY from public view', isMasked);
+  }
+
+  // ----------------------------------------------------
+  // TEST 12: SVG upload rejection logic
+  // ----------------------------------------------------
+  {
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
     const allowedExts = ['.jpg', '.jpeg', '.png', '.webp'];
 
-    const testSvgMime = 'image/svg+xml';
-    const testSvgExt = '.svg';
+    const isSvgMimeAllowed = allowedMimeTypes.includes('image/svg+xml');
+    const isSvgExtAllowed = allowedExts.includes('.svg');
+    const isJpgAllowed = allowedMimeTypes.includes('image/jpeg') && allowedExts.includes('.jpg');
 
-    const isSvgMimeAllowed = allowedMimes.includes(testSvgMime);
-    const isSvgExtAllowed = allowedExts.includes(testSvgExt);
-
-    assert('SVG MIME type image/svg+xml is disallowed in upload whitelist', !isSvgMimeAllowed);
-    assert('SVG file extension .svg is disallowed in upload whitelist', !isSvgExtAllowed);
+    assert('SVG MIME type image/svg+xml is rejected by media upload policy', !isSvgMimeAllowed);
+    assert('SVG extension .svg is rejected by media upload policy', !isSvgExtAllowed);
+    assert('Valid image formats (e.g. JPG) are accepted by media upload policy', isJpgAllowed);
   }
 
   console.log('\n====================================================');
@@ -318,6 +533,15 @@ async function runVerification() {
   if (failed > 0) {
     process.exit(1);
   }
+}
+
+function jestFn(impl?: any) {
+  const fn: any = (...args: any[]) => {
+    fn.mock.calls.push(args);
+    if (impl) return impl(...args);
+  };
+  fn.mock = { calls: [] };
+  return fn;
 }
 
 runVerification().catch((err) => {

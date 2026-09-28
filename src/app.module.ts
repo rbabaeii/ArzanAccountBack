@@ -30,14 +30,9 @@ import { APP_GUARD } from '@nestjs/core';
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([
       {
-        name: 'short',
+        name: 'default',
         ttl: 60000,
-        limit: 100,
-      },
-      {
-        name: 'strict',
-        ttl: 120000,
-        limit: 15,
+        limit: 60,
       },
     ]),
     PrismaModule,
