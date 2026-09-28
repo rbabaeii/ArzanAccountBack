@@ -6,7 +6,7 @@ import {
   Body,
   Param,
   Query,
-  Headers,
+  UseGuards,
   ForbiddenException,
   Logger,
 } from '@nestjs/common';
@@ -19,52 +19,16 @@ import {
   UpdateCartBeCartSettingsDto,
 } from './cartbecart.dto';
 import { ApiResponse } from '../common/dto/api-response.dto';
-import { JwtService } from '@nestjs/jwt';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @Controller('cartbecart')
 export class CartBeCartController {
   private readonly logger = new Logger(CartBeCartController.name);
 
-  constructor(
-    private readonly cartBeCartService: CartBeCartService,
-    private readonly jwtService: JwtService,
-  ) {}
-
-  private extractAdminUser(authHeader?: string, clientUser?: any) {
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      try {
-        const token = authHeader.substring(7);
-        const payload: any = this.jwtService.decode(token);
-        if (payload) {
-          return {
-            id: payload.sub || payload.id,
-            name: payload.name || payload.email || 'مدیر سیستم',
-            phone: payload.phone,
-            role: payload.role || 'USER',
-          };
-        }
-      } catch {
-        // token decode error
-      }
-    }
-    return {
-      id: clientUser?.id,
-      name: clientUser?.name || 'مدیر مالی',
-      phone: clientUser?.phone,
-      role: clientUser?.role || 'USER',
-    };
-  }
-
-  private assertAdminRole(role: string) {
-    if (
-      role !== 'SUPER_ADMIN' &&
-      role !== 'FINANCE_ADMIN' &&
-      role !== 'ADMIN' &&
-      role !== 'SUPPORT_ADMIN'
-    ) {
-      throw new ForbiddenException('شما دسترسی لازم به این بخش مدیریتی را ندارید.');
-    }
-  }
+  constructor(private readonly cartBeCartService: CartBeCartService) {}
 
   /**
    * Public: Initiate a card-to-card payment
@@ -97,30 +61,47 @@ export class CartBeCartController {
   }
 
   /**
-   * Test / Demo helper: Simulate instant payment verification
+   * Admin helper: Simulate payment verification (restricted to Admin & dev/staging)
    */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'FINANCE_ADMIN')
   @Post('simulate-success/:token')
   async simulateSuccess(
     @Param('token') token: string,
-    @Headers('authorization') authHeader?: string,
-    @Query('role') roleFromQuery?: string,
+    @CurrentUser() adminUser: any,
   ) {
-    const user = this.extractAdminUser(authHeader, { role: roleFromQuery });
-    const data = await this.cartBeCartService.simulatePaymentSuccess(token, user);
+    if (
+      process.env.ENABLE_PAYMENT_SIMULATION !== 'true' &&
+      process.env.NODE_ENV === 'production'
+    ) {
+      throw new ForbiddenException('شبیه‌سازی پرداخت در محیط عملیاتی غیرفعال است.');
+    }
+    const admin = {
+      id: adminUser.id || adminUser.sub,
+      name: adminUser.name || 'مدیر مالی',
+      phone: adminUser.phone,
+      role: adminUser.role,
+    };
+    const data = await this.cartBeCartService.simulatePaymentSuccess(token, admin);
     return ApiResponse.success(data, 'تراکنش تستی با موفقیت تأیید شد.');
   }
 
   /**
    * User: Fetch own card payments / deposits history
    */
+  @UseGuards(JwtAuthGuard)
   @Get('user/:userId')
   async getUserPayments(
     @Param('userId') userId: string,
+    @CurrentUser() user: any,
     @Query('status') status?: string,
     @Query('type') type?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
+    if (user.id !== userId && user.role !== 'SUPER_ADMIN' && user.role !== 'FINANCE_ADMIN') {
+      throw new ForbiddenException('دسترسی غیرمجاز به سوابق پرداخت کاربر دیگر.');
+    }
     const data = await this.cartBeCartService.getUserPayments(userId, {
       status,
       type,
@@ -133,10 +114,10 @@ export class CartBeCartController {
   /**
    * Admin: List all card payments
    */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'FINANCE_ADMIN')
   @Get('admin/payments')
   async getAdminPayments(
-    @Headers('authorization') authHeader?: string,
-    @Query('role') roleFromQuery?: string,
     @Query('status') status?: string,
     @Query('type') type?: string,
     @Query('userId') userId?: string,
@@ -144,9 +125,6 @@ export class CartBeCartController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    const admin = this.extractAdminUser(authHeader, { role: roleFromQuery });
-    this.assertAdminRole(admin.role);
-
     const data = await this.cartBeCartService.getAdminPayments({
       status,
       type,
@@ -161,33 +139,44 @@ export class CartBeCartController {
   /**
    * Admin: Approve a manual card payment
    */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'FINANCE_ADMIN')
   @Post('admin/approve/:id')
   async approvePayment(
     @Param('id') id: string,
     @Body() dto: AdminApprovePaymentDto,
-    @Headers('authorization') authHeader?: string,
-    @Body('adminUser') adminUserFromBody?: any,
+    @CurrentUser() adminUser: any,
   ) {
-    const admin = this.extractAdminUser(authHeader, adminUserFromBody);
-    this.assertAdminRole(admin.role);
-
+    const admin = {
+      id: adminUser.id || adminUser.sub,
+      name: adminUser.name || 'مدیر مالی',
+      phone: adminUser.phone,
+      role: adminUser.role,
+    };
     const data = await this.cartBeCartService.adminApprovePayment(id, dto, admin);
-    return ApiResponse.success(data, 'پرداخت کاربر با موفقیت تأیید شد و سفارش/کیف‌پول بروزرسانی گردید.');
+    return ApiResponse.success(
+      data,
+      'پرداخت کاربر با موفقیت تأیید شد و سفارش/کیف‌پول بروزرسانی گردید.',
+    );
   }
 
   /**
    * Admin: Reject a manual card payment
    */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'FINANCE_ADMIN')
   @Post('admin/reject/:id')
   async rejectPayment(
     @Param('id') id: string,
     @Body() dto: AdminRejectPaymentDto,
-    @Headers('authorization') authHeader?: string,
-    @Body('adminUser') adminUserFromBody?: any,
+    @CurrentUser() adminUser: any,
   ) {
-    const admin = this.extractAdminUser(authHeader, adminUserFromBody);
-    this.assertAdminRole(admin.role);
-
+    const admin = {
+      id: adminUser.id || adminUser.sub,
+      name: adminUser.name || 'مدیر مالی',
+      phone: adminUser.phone,
+      role: adminUser.role,
+    };
     const data = await this.cartBeCartService.adminRejectPayment(id, dto, admin);
     return ApiResponse.success(data, 'درخواست پرداخت کارت‌به‌کارت رد شد.');
   }
@@ -195,14 +184,10 @@ export class CartBeCartController {
   /**
    * Admin: Get CartBeCart settings
    */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'FINANCE_ADMIN')
   @Get('admin/settings')
-  async getSettings(
-    @Headers('authorization') authHeader?: string,
-    @Query('role') roleFromQuery?: string,
-  ) {
-    const admin = this.extractAdminUser(authHeader, { role: roleFromQuery });
-    this.assertAdminRole(admin.role);
-
+  async getSettings() {
     const data = await this.cartBeCartService.getSettings();
     return ApiResponse.success(data);
   }
@@ -210,15 +195,12 @@ export class CartBeCartController {
   /**
    * Admin: Update CartBeCart settings
    */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'FINANCE_ADMIN')
   @Put('admin/settings')
   async updateSettings(
     @Body() dto: UpdateCartBeCartSettingsDto,
-    @Headers('authorization') authHeader?: string,
-    @Body('role') roleFromBody?: string,
   ) {
-    const admin = this.extractAdminUser(authHeader, { role: roleFromBody });
-    this.assertAdminRole(admin.role);
-
     const data = await this.cartBeCartService.updateSettings(dto);
     return ApiResponse.success(data, 'تنظیمات درگاه کارت‌به‌کارت با موفقیت ذخیره شد.');
   }

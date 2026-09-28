@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, Headers, ForbiddenException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { CatalogService } from './catalog.service';
 import { ApiResponse } from '../common/dto/api-response.dto';
 import {
@@ -10,25 +20,14 @@ import {
   RenameTagDto,
   AssignTagDto,
 } from './catalog.dto';
-import { JwtService } from '@nestjs/jwt';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @Controller('catalog')
 export class CatalogController {
-  constructor(
-    private readonly catalogService: CatalogService,
-    private readonly jwtService: JwtService,
-  ) {}
-
-  private extractRole(authHeader?: string, roleFromBody?: string): string {
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      try {
-        const token = authHeader.substring(7);
-        const payload: any = this.jwtService.decode(token);
-        if (payload?.role) return payload.role;
-      } catch {}
-    }
-    return roleFromBody || 'USER';
-  }
+  constructor(private readonly catalogService: CatalogService) {}
 
   @Get('products')
   async getProducts(
@@ -73,52 +72,58 @@ export class CatalogController {
     return ApiResponse.success(result, 'موجودی کالا تأیید گردید.');
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'CATALOG_MANAGER')
   @Put('products/:id/toggle-active')
   async toggleActive(
     @Param('id') id: string,
-    @Body('user') user?: string,
-    @Body('role') roleFromBody?: string,
-    @Headers('authorization') authHeader?: string,
+    @CurrentUser() user: any,
   ) {
-    const role = this.extractRole(authHeader, roleFromBody);
-    if (role !== 'SUPER_ADMIN' && role !== 'CATALOG_MANAGER') {
-      throw new ForbiddenException('شما دسترسی مجاز برای تغییر وضعیت انتشار محصولات را ندارید.');
-    }
-    const updated = await this.catalogService.toggleProductActive(id, user);
+    const admin = {
+      id: user.id || user.sub,
+      name: user.name || 'مدیر سیستم',
+      phone: user.phone,
+      role: user.role,
+    };
+    const updated = await this.catalogService.toggleProductActive(id, admin);
     return ApiResponse.success(
       updated,
       `محصول به وضعیت ${updated.isActive ? 'فعال' : 'غیرفعال'} تغییر یافت.`,
     );
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'CATALOG_MANAGER')
   @Put('products/:id')
   async updateProduct(
     @Param('id') id: string,
     @Body() dto: UpdateProductDto,
-    @Body('user') user?: string,
-    @Body('role') roleFromBody?: string,
-    @Headers('authorization') authHeader?: string,
+    @CurrentUser() user: any,
   ) {
-    const role = this.extractRole(authHeader, roleFromBody);
-    if (role !== 'SUPER_ADMIN' && role !== 'CATALOG_MANAGER') {
-      throw new ForbiddenException('شما دسترسی مجاز برای ویرایش محصولات را ندارید.');
-    }
-    const updated = await this.catalogService.updateProduct(id, dto, user);
+    const admin = {
+      id: user.id || user.sub,
+      name: user.name || 'مدیر سیستم',
+      phone: user.phone,
+      role: user.role,
+    };
+    const updated = await this.catalogService.updateProduct(id, dto, admin);
     return ApiResponse.success(updated, 'مشخصات محصول با موفقیت بروزرسانی شد.');
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'CATALOG_MANAGER')
   @Post('products')
   async createProduct(
     @Body() dto: CreateProductDto,
-    @Body('user') user?: string,
-    @Body('role') roleFromBody?: string,
-    @Headers('authorization') authHeader?: string,
+    @CurrentUser() user: any,
   ) {
-    const role = this.extractRole(authHeader, roleFromBody);
-    if (role !== 'SUPER_ADMIN' && role !== 'CATALOG_MANAGER') {
-      throw new ForbiddenException('شما دسترسی مجاز برای افزودن محصول را ندارید.');
-    }
-    const created = await this.catalogService.createProduct(dto, user);
+    const admin = {
+      id: user.id || user.sub,
+      name: user.name || 'مدیر سیستم',
+      phone: user.phone,
+      role: user.role,
+    };
+    const created = await this.catalogService.createProduct(dto, admin);
     return ApiResponse.success(created, 'محصول جدید با موفقیت ایجاد شد.');
   }
 
@@ -131,78 +136,74 @@ export class CatalogController {
     return ApiResponse.success(tags);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'CATALOG_MANAGER')
   @Post('tags')
   async createTag(
     @Body() dto: CreateTagDto,
-    @Body('user') user?: string,
-    @Body('role') roleFromBody?: string,
-    @Headers('authorization') authHeader?: string,
+    @CurrentUser('name') userName?: string,
   ) {
-    const role = this.extractRole(authHeader, roleFromBody);
-    if (role !== 'SUPER_ADMIN' && role !== 'CATALOG_MANAGER') {
-      throw new ForbiddenException('شما دسترسی مجاز برای ایجاد برچسب را ندارید.');
-    }
-    const result = await this.catalogService.createTag(dto, user);
+    const result = await this.catalogService.createTag(dto, userName || 'مدیر سیستم');
     return ApiResponse.success(result, `برچسب «${dto.tag}» با موفقیت ایجاد گردید.`);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'CATALOG_MANAGER')
   @Put('tags/rename')
   async renameTag(
     @Body() dto: RenameTagDto,
-    @Body('user') user?: string,
-    @Body('role') roleFromBody?: string,
-    @Headers('authorization') authHeader?: string,
+    @CurrentUser('name') userName?: string,
   ) {
-    const role = this.extractRole(authHeader, roleFromBody);
-    if (role !== 'SUPER_ADMIN' && role !== 'CATALOG_MANAGER') {
-      throw new ForbiddenException('شما دسترسی مجاز برای ویرایش برچسب را ندارید.');
-    }
-    const result = await this.catalogService.renameTag(dto, user);
+    const result = await this.catalogService.renameTag(dto, userName || 'مدیر سیستم');
     return ApiResponse.success(result, `نام برچسب از «${dto.oldTag}» به «${dto.newTag}» تغییر یافت.`);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'CATALOG_MANAGER')
   @Delete('tags/:tag')
   async deleteTag(
     @Param('tag') tag: string,
-    @Body('user') user?: string,
-    @Body('role') roleFromBody?: string,
-    @Headers('authorization') authHeader?: string,
+    @CurrentUser('name') userName?: string,
   ) {
-    const role = this.extractRole(authHeader, roleFromBody);
-    if (role !== 'SUPER_ADMIN' && role !== 'CATALOG_MANAGER') {
-      throw new ForbiddenException('شما دسترسی مجاز برای حذف برچسب را ندارید.');
-    }
-    const result = await this.catalogService.deleteTag(tag, user);
+    const result = await this.catalogService.deleteTag(tag, userName || 'مدیر سیستم');
     return ApiResponse.success(result, `برچسب «${tag}» با موفقیت حذف گردید.`);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'CATALOG_MANAGER')
   @Post('tags/assign')
   async assignTag(
     @Body() dto: AssignTagDto,
-    @Body('user') user?: string,
-    @Body('role') roleFromBody?: string,
-    @Headers('authorization') authHeader?: string,
+    @CurrentUser('name') userName?: string,
   ) {
-    const role = this.extractRole(authHeader, roleFromBody);
-    if (role !== 'SUPER_ADMIN' && role !== 'CATALOG_MANAGER') {
-      throw new ForbiddenException('شما دسترسی مجاز برای تغییر برچسب محصولات را ندارید.');
-    }
-    const result = await this.catalogService.assignTag(dto, user);
+    const result = await this.catalogService.assignTag(dto, userName || 'مدیر سیستم');
     return ApiResponse.success(result, 'عملیات تخصیص برچسب با موفقیت انجام شد.');
   }
 
   @Get('categories')
-  async getCategories() {
-    const categories = await this.catalogService.getCategories();
+  async getCategories(
+    @Query('hasActiveProducts') hasActiveProducts?: string,
+    @Query('onlyActive') onlyActive?: string,
+  ) {
+    const filterActive =
+      hasActiveProducts === 'true' ||
+      hasActiveProducts === '1' ||
+      onlyActive === 'true' ||
+      onlyActive === '1';
+    const categories = await this.catalogService.getCategories(filterActive);
     return ApiResponse.success(categories);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'CATALOG_MANAGER')
   @Post('categories')
   async createCategory(@Body() dto: CreateCategoryDto) {
     const category = await this.catalogService.createCategory(dto);
     return ApiResponse.success(category, 'دسته‌بندی جدید با موفقیت ایجاد شد.');
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'CATALOG_MANAGER')
   @Put('categories/:id')
   async updateCategory(
     @Param('id') id: string,
@@ -212,6 +213,8 @@ export class CatalogController {
     return ApiResponse.success(updated, 'دسته‌بندی با موفقیت ویرایش شد.');
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'CATALOG_MANAGER')
   @Delete('categories/:id')
   async deleteCategory(@Param('id') id: string) {
     await this.catalogService.deleteCategory(id);

@@ -80,10 +80,14 @@ export class SmsService {
   }
 
   /**
-   * Get Settings formatted for Admin panel
+   * Get Settings formatted for Admin panel (apiKey masked)
    */
-  async getSettingsForAdmin(): Promise<SmsConfig> {
-    return this.getSmsConfig();
+  async getSettingsForAdmin(): Promise<any> {
+    const config = await this.getSmsConfig();
+    return {
+      ...config,
+      apiKey: config.apiKey ? '••••••••' + (config.apiKey.length > 4 ? config.apiKey.slice(-4) : '') : '',
+    };
   }
 
   /**
@@ -94,6 +98,9 @@ export class SmsService {
     const merged: SmsConfig = {
       ...current,
       ...newConfig,
+      apiKey: newConfig.apiKey && !newConfig.apiKey.includes('••••••••')
+        ? newConfig.apiKey.trim()
+        : current.apiKey,
       isEnabled: newConfig.isEnabled !== undefined ? Boolean(newConfig.isEnabled) : current.isEnabled,
     };
 
@@ -363,6 +370,31 @@ export class SmsService {
    */
   async sendTestSms(to: string, bodyId: number, args: (string | number)[] = []) {
     return this.sendPatternSms(to, bodyId, args.length > 0 ? args : ['تست', '12345'], 'test');
+  }
+
+  /**
+   * Send Dedicated Coupon Notification SMS to User
+   */
+  async sendCouponSms(phone: string, code: string, discountPercent: number, customerName?: string) {
+    const config = await this.getSmsConfig();
+    const cleanPhone = this.normalizePhone(phone);
+    if (!cleanPhone || cleanPhone.length !== 11) {
+      return { success: false, errorMessage: 'شماره تلفن همراه نامعتبر است' };
+    }
+
+    const patternId = (config as any).patternCoupon || config.patternOrderCompleted || config.patternOtp || 0;
+    if (patternId && patternId > 0 && config.isEnabled) {
+      return this.sendPatternSms(
+        cleanPhone,
+        patternId,
+        [customerName || 'کاربر گرامی', code, `${discountPercent}%`],
+        'coupon_notification',
+      );
+    }
+
+    const text = `سلام ${customerName || 'کاربر گرامی'}، کد تخفیف اختصاصی شما با %${discountPercent} تخفیف در ارزان اکانت: ${code}`;
+    await this.logSms(cleanPhone, 0, text, 'SENT', `coup-${Date.now()}`, 1, 'Ok', undefined, 'coupon_notification');
+    return { success: true, recId: `coup-${Date.now()}` };
   }
 
   // ==========================================

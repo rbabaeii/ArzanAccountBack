@@ -49,11 +49,11 @@ export class EmailService {
           host: parsed.host || this.configService.get('SMTP_HOST', 'smtp.gmail.com'),
           port: Number(parsed.port) || Number(this.configService.get('SMTP_PORT', 465)),
           secure: parsed.secure !== undefined ? Boolean(parsed.secure) : (Number(parsed.port || 465) === 465),
-          user: parsed.user || this.configService.get('SMTP_USER', 'rezadalyagpt@gmail.com'),
-          pass: parsed.pass || this.configService.get('SMTP_PASS', 'xeuhxtofquloumhs'),
+          user: parsed.user || this.configService.get('SMTP_USER', ''),
+          pass: parsed.pass || this.configService.get('SMTP_PASS', ''),
           fromName: rawFromName.replace(/^["']|["']$/g, '').trim(),
-          fromEmail: (parsed.fromEmail || this.configService.get('MAIL_FROM_EMAIL', 'rezadalyagpt@gmail.com')).trim(),
-          replyTo: (parsed.replyTo || this.configService.get('MAIL_REPLY_TO', 'rezadalyagpt@gmail.com')).trim(),
+          fromEmail: (parsed.fromEmail || this.configService.get('MAIL_FROM_EMAIL', '')).trim(),
+          replyTo: (parsed.replyTo || this.configService.get('MAIL_REPLY_TO', '')).trim(),
           isEnabled: parsed.isEnabled !== undefined ? Boolean(parsed.isEnabled) : true,
         };
       }
@@ -68,11 +68,11 @@ export class EmailService {
       host: this.configService.get('SMTP_HOST', 'smtp.gmail.com'),
       port,
       secure: this.configService.get('SMTP_SECURE', 'true') === 'true' || port === 465,
-      user: this.configService.get('SMTP_USER', 'rezadalyagpt@gmail.com'),
-      pass: this.configService.get('SMTP_PASS', 'xeuhxtofquloumhs'),
+      user: this.configService.get('SMTP_USER', ''),
+      pass: this.configService.get('SMTP_PASS', ''),
       fromName: defaultFromName.replace(/^["']|["']$/g, '').trim(),
-      fromEmail: this.configService.get('MAIL_FROM_EMAIL', 'rezadalyagpt@gmail.com').trim(),
-      replyTo: this.configService.get('MAIL_REPLY_TO', 'rezadalyagpt@gmail.com').trim(),
+      fromEmail: this.configService.get('MAIL_FROM_EMAIL', '').trim(),
+      replyTo: this.configService.get('MAIL_REPLY_TO', '').trim(),
       isEnabled: this.configService.get('MAIL_ENABLED', 'true') === 'true',
     };
   }

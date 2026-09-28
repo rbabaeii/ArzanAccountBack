@@ -16,6 +16,10 @@ import { SearchModule } from './search/search.module';
 import { RedisModule } from './redis/redis.module';
 import { CartBeCartModule } from './cartbecart/cartbecart.module';
 import { SmsModule } from './sms/sms.module';
+import { CouponsModule } from './coupons/coupons.module';
+
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 
 @Module({
   imports: [
@@ -24,6 +28,18 @@ import { SmsModule } from './sms/sms.module';
       envFilePath: ['.env'],
     }),
     ScheduleModule.forRoot(),
+    ThrottlerModule.forRoot([
+      {
+        name: 'short',
+        ttl: 60000,
+        limit: 100,
+      },
+      {
+        name: 'strict',
+        ttl: 120000,
+        limit: 15,
+      },
+    ]),
     PrismaModule,
     IrMarketModule,
     SyncModule,
@@ -39,6 +55,13 @@ import { SmsModule } from './sms/sms.module';
     SearchModule,
     RedisModule,
     CartBeCartModule,
+    CouponsModule,
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
   ],
 })
 export class AppModule {}

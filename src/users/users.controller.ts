@@ -7,35 +7,32 @@ import {
   Body,
   Param,
   Query,
-  Headers,
+  UseGuards,
   ForbiddenException,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { ApiResponse } from '../common/dto/api-response.dto';
-import { CreateUserDto, UpdateUserRoleDto, UpdateUserStatusDto, UpdateProfileDto, TopUpWalletDto, ConvertPointsDto, CreateWithdrawalDto, ProcessWithdrawalDto } from './users.dto';
-import { JwtService } from '@nestjs/jwt';
+import {
+  CreateUserDto,
+  UpdateUserRoleDto,
+  UpdateUserStatusDto,
+  UpdateProfileDto,
+  TopUpWalletDto,
+  ConvertPointsDto,
+  CreateWithdrawalDto,
+  ProcessWithdrawalDto,
+} from './users.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @Controller('users')
 export class UsersController {
-  constructor(
-    private readonly usersService: UsersService,
-    private readonly jwtService: JwtService,
-  ) {}
+  constructor(private readonly usersService: UsersService) {}
 
-  private extractUserRole(authHeader?: string, roleFromClient?: string): string {
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      try {
-        const token = authHeader.substring(7);
-        const payload: any = this.jwtService.decode(token);
-        if (payload?.role) return payload.role;
-      } catch {
-        // Fallback
-      }
-    }
-    return roleFromClient || 'USER';
-  }
-
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'SUPPORT_ADMIN')
   @Get()
   async getUsers(
     @Query('role') role?: string,
@@ -54,12 +51,16 @@ export class UsersController {
     return ApiResponse.success(data);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'FINANCE_ADMIN', 'SUPPORT_ADMIN')
   @Get('stats')
   async getUserStats() {
     const stats = await this.usersService.getUserStats();
     return ApiResponse.success(stats);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN')
   @Get('admin-activities')
   async getAdminActivities(
     @Query('adminId') adminId?: string,
@@ -87,6 +88,8 @@ export class UsersController {
   /**
    * Admin fetches all withdrawal requests (placed before :id to prevent shadowing)
    */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'FINANCE_ADMIN')
   @Get('admin/withdrawals-list')
   async getAdminWithdrawals(
     @Query('status') status?: string,
@@ -94,13 +97,7 @@ export class UsersController {
     @Query('search') search?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
-    @Headers('authorization') authHeader?: string,
-    @Query('role') roleFromQuery?: string,
   ) {
-    const role = this.extractUserRole(authHeader, roleFromQuery);
-    if (role !== 'SUPER_ADMIN' && role !== 'FINANCE_ADMIN' && role !== 'ADMIN') {
-      throw new ForbiddenException('شما دسترسی لازم به بخش تسویه حساب مالی را ندارید.');
-    }
     const result = await this.usersService.getAdminWithdrawals({
       status,
       userId,
@@ -114,17 +111,13 @@ export class UsersController {
   /**
    * Admin approves or rejects a withdrawal request
    */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'FINANCE_ADMIN')
   @Post('admin/withdrawals/:id/process')
   async processWithdrawal(
     @Param('id') id: string,
     @Body() dto: ProcessWithdrawalDto,
-    @Headers('authorization') authHeader?: string,
-    @Body('role') roleFromBody?: string,
   ) {
-    const role = this.extractUserRole(authHeader, roleFromBody);
-    if (role !== 'SUPER_ADMIN' && role !== 'FINANCE_ADMIN' && role !== 'ADMIN') {
-      throw new ForbiddenException('شما دسترسی لازم جهت پردازش درخواست‌های تسویه حساب را ندارید.');
-    }
     try {
       const result = await this.usersService.processWithdrawal(id, dto);
       return ApiResponse.success(
@@ -136,59 +129,78 @@ export class UsersController {
     }
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN')
   @Get(':id/activity-summary')
   async getAdminActivitySummary(@Param('id') id: string) {
     const summary = await this.usersService.getAdminActivitySummary(id);
     return ApiResponse.success(summary);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get(':id')
-  async getUserById(@Param('id') id: string) {
-    const user = await this.usersService.getUserById(id);
-    return ApiResponse.success(user);
+  async getUserById(@Param('id') id: string, @CurrentUser() user: any) {
+    if (user.id !== id && user.role !== 'SUPER_ADMIN' && user.role !== 'SUPPORT_ADMIN') {
+      throw new ForbiddenException('دسترسی غیرمجاز به اطلاعات کاربر دیگر.');
+    }
+    const userData = await this.usersService.getUserById(id);
+    return ApiResponse.success(userData);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN')
   @Post()
   async createUser(
     @Body() dto: CreateUserDto,
-    @Body('adminUser') adminUser?: string,
+    @CurrentUser('phone') adminPhone?: string,
   ) {
-    const user = await this.usersService.createUser(dto, adminUser);
+    const user = await this.usersService.createUser(dto, adminPhone || 'مدیر ارشد');
     return ApiResponse.success(user, 'کاربر با موفقیت ایجاد شد.');
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN')
   @Put(':id/role')
   async updateRole(
     @Param('id') id: string,
     @Body() dto: UpdateUserRoleDto,
-    @Body('adminUser') adminUser?: string,
+    @CurrentUser('phone') adminPhone?: string,
   ) {
-    const updated = await this.usersService.updateUserRole(id, dto, adminUser);
+    const updated = await this.usersService.updateUserRole(id, dto, adminPhone || 'مدیر ارشد');
     return ApiResponse.success(updated, 'نقش کاربر با موفقیت تغییر یافت.');
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN')
   @Put(':id/status')
   async updateStatus(
     @Param('id') id: string,
     @Body() dto: UpdateUserStatusDto,
-    @Body('adminUser') adminUser?: string,
+    @CurrentUser('phone') adminPhone?: string,
   ) {
-    const updated = await this.usersService.updateUserStatus(id, dto, adminUser);
+    const updated = await this.usersService.updateUserStatus(id, dto, adminPhone || 'مدیر ارشد');
     return ApiResponse.success(
       updated,
       `وضعیت کاربر به ${updated.status === 'ACTIVE' ? 'فعال' : 'مسدود'} تغییر یافت.`,
     );
   }
 
+  @UseGuards(JwtAuthGuard)
   @Put(':id/profile')
   async updateProfile(
     @Param('id') id: string,
     @Body() dto: UpdateProfileDto,
+    @CurrentUser() user: any,
   ) {
+    if (user.id !== id && user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenException('شما فقط مجاز به ویرایش مشخصات پروفایل خود هستید.');
+    }
     const updated = await this.usersService.updateProfile(id, dto);
     return ApiResponse.success(updated, 'اطلاعات پروفایل کاربری با موفقیت به‌روزرسانی شد.');
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'FINANCE_ADMIN')
   @Post(':id/topup')
   @Post(':id/topup-wallet')
   async topUpWallet(
@@ -199,41 +211,58 @@ export class UsersController {
     return ApiResponse.success(updated, 'کیف پول با موفقیت شارژ گردید.');
   }
 
+  @UseGuards(JwtAuthGuard)
   @Post(':id/bind-referral')
   async bindReferral(
     @Param('id') id: string,
     @Body('referralCode') referralCode: string,
+    @CurrentUser() user: any,
   ) {
-    const user = await this.usersService.bindReferral(id, referralCode);
-    return ApiResponse.success(user, 'کد معرف با موفقیت برای حساب شما ثبت گردید.');
+    if (user.id !== id && user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenException('دسترسی غیرمجاز.');
+    }
+    const updated = await this.usersService.bindReferral(id, referralCode);
+    return ApiResponse.success(updated, 'کد معرف با موفقیت برای حساب شما ثبت گردید.');
   }
 
+  @UseGuards(JwtAuthGuard)
   @Post(':id/convert-points')
   async convertPoints(
     @Param('id') id: string,
     @Body() dto: ConvertPointsDto,
+    @CurrentUser() user: any,
   ) {
+    if (user.id !== id && user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenException('دسترسی غیرمجاز.');
+    }
     const result = await this.usersService.convertPoints(id, dto.points);
     return ApiResponse.success(result, 'امتیاز کلاب با موفقیت به کد تخفیف تبدیل شد.');
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN')
   @Delete(':id')
   async deleteUser(
     @Param('id') id: string,
-    @Body('adminUser') adminUser?: string,
+    @CurrentUser('phone') adminPhone?: string,
   ) {
-    const result = await this.usersService.deleteUser(id, adminUser);
+    const result = await this.usersService.deleteUser(id, adminPhone || 'مدیر ارشد');
     return ApiResponse.success(result, 'کاربر حذف گردید.');
   }
 
   /**
    * User creates a withdrawal request
    */
+  @UseGuards(JwtAuthGuard)
   @Post(':id/withdrawals')
   async requestWithdrawal(
     @Param('id') id: string,
     @Body() dto: CreateWithdrawalDto,
+    @CurrentUser() user: any,
   ) {
+    if (user.id !== id && user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenException('دسترسی غیرمجاز: امکان ثبت درخواست تسویه برای کاربر دیگر وجود ندارد.');
+    }
     try {
       const result = await this.usersService.requestWithdrawal(id, dto);
       return ApiResponse.success(result, 'درخواست تسویه با موفقیت ثبت شد، مبلغ از کیف پول قفل گردید و به واحد مالی ارجاع شد.');
@@ -245,8 +274,15 @@ export class UsersController {
   /**
    * User fetches their withdrawal requests
    */
+  @UseGuards(JwtAuthGuard)
   @Get(':id/withdrawals')
-  async getUserWithdrawals(@Param('id') id: string) {
+  async getUserWithdrawals(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+  ) {
+    if (user.id !== id && user.role !== 'SUPER_ADMIN' && user.role !== 'FINANCE_ADMIN') {
+      throw new ForbiddenException('دسترسی غیرمجاز به درخواست‌های تسویه دیگران.');
+    }
     const result = await this.usersService.getUserWithdrawals(id);
     return ApiResponse.success(result);
   }
@@ -254,8 +290,15 @@ export class UsersController {
   /**
    * User fetches their referral network and earnings per user
    */
+  @UseGuards(JwtAuthGuard)
   @Get(':id/referrals')
-  async getReferralNetwork(@Param('id') id: string) {
+  async getReferralNetwork(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+  ) {
+    if (user.id !== id && user.role !== 'SUPER_ADMIN' && user.role !== 'SUPPORT_ADMIN') {
+      throw new ForbiddenException('دسترسی غیرمجاز.');
+    }
     const result = await this.usersService.getReferralNetwork(id);
     return ApiResponse.success(result);
   }

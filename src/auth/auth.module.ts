@@ -10,6 +10,7 @@ import { EmailModule } from '../email/email.module';
     PrismaModule,
     EmailModule,
     JwtModule.register({
+      global: true,
       secret: process.env.JWT_SECRET || 'arzan-account-secret-key-2026',
       signOptions: { expiresIn: '30d' },
     }),

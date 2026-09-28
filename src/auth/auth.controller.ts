@@ -12,6 +12,8 @@ import {
   SendOtpDto,
   VerifyOtpDto,
   SendEmailOtpDto,
+  SendDirectEmailOtpDto,
+  VerifyEmailOtpDto,
   LoginPasswordDto,
   UpdatePasswordDto,
 } from './auth.dto';
@@ -34,13 +36,13 @@ export class AuthController {
   }
 
   @Post('send-email-otp-direct')
-  async sendDirectEmailOtp(@Body('email') email: string) {
-    return this.authService.sendDirectEmailOtp(email);
+  async sendDirectEmailOtp(@Body() dto: SendDirectEmailOtpDto) {
+    return this.authService.sendDirectEmailOtp(dto.email);
   }
 
   @Post('verify-email-otp')
-  async verifyEmailOtp(@Body() body: { email: string; code: string; referralCode?: string }) {
-    return this.authService.verifyEmailOtp(body.email, body.code, body.referralCode);
+  async verifyEmailOtp(@Body() dto: VerifyEmailOtpDto) {
+    return this.authService.verifyEmailOtp(dto.email, dto.code, dto.referralCode);
   }
 
   @Post('verify-otp')

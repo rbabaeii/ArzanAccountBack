@@ -566,7 +566,10 @@ export class AuthService implements OnApplicationBootstrap {
 
     if (!user) throw new UnauthorizedException('کاربر یافت نشد.');
 
-    if (user.password && currentPasswordRaw) {
+    if (user.password) {
+      if (!currentPasswordRaw) {
+        throw new BadRequestException('وارد کردن رمز عبور فعلی جهت تغییر رمز الزامی است.');
+      }
       const isCurrentValid = bcrypt.compareSync(currentPasswordRaw, user.password);
       if (!isCurrentValid) {
         throw new BadRequestException('رمز عبور فعلی وارد شده نادرست است.');

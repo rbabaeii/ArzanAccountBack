@@ -285,7 +285,10 @@ export class CatalogService {
     };
   }
 
-  async toggleProductActive(id: string, user = 'مدیر سیستم') {
+  async toggleProductActive(
+    id: string,
+    admin?: { id?: string; name?: string; phone?: string; role?: string } | string,
+  ) {
     const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException('محصول یافت نشد.');
 
@@ -295,22 +298,42 @@ export class CatalogService {
       data: { isActive: nextState },
     });
 
+    const adminObj = typeof admin === 'object' && admin ? admin : null;
+    const adminName = adminObj?.name || (typeof admin === 'string' ? admin : 'مدیر سیستم');
+    const adminId = adminObj?.id || null;
+    const adminPhone = adminObj?.phone || null;
+    const userDisplay = `${adminName}${adminPhone ? ` (${adminPhone})` : ''}`;
+
     // Log in AuditLog
     await this.prisma.auditLog.create({
       data: {
-        action: nextState ? 'فعال‌سازی محصول در سایت' : 'غیرفعال‌سازی محصول',
-        details: `محصول ${product.customTitle} (${product.name}) به حالت ${nextState ? 'فعال' : 'غیرفعال'} تغییر یافت.`,
-        user,
-        type: 'product_toggle',
+        action: nextState
+          ? `فعال‌سازی محصول در سایت (${product.customTitle})`
+          : `غیرفعال‌سازی محصول در سایت (${product.customTitle})`,
+        details: `محصول «${product.customTitle}» (${product.name}) توسط مدیر ${adminName} به حالت ${
+          nextState ? 'فعال (منتشر شده)' : 'غیرفعال (مخفی)'
+        } تغییر وضعیت یافت.`,
+        user: userDisplay,
+        adminId,
+        adminName,
+        adminPhone,
+        type: 'product',
       },
     });
 
     return updated;
   }
 
-  async createProduct(dto: CreateProductDto, user = 'مدیر سیستم') {
+  async createProduct(
+    dto: CreateProductDto,
+    admin?: { id?: string; name?: string; phone?: string; role?: string } | string,
+  ) {
     const { user: userFromDto, ...productData } = dto;
-    const author = userFromDto || user || 'مدیر سیستم';
+    const adminObj = typeof admin === 'object' && admin ? admin : null;
+    const adminName = adminObj?.name || userFromDto || (typeof admin === 'string' ? admin : 'مدیر سیستم');
+    const adminId = adminObj?.id || null;
+    const adminPhone = adminObj?.phone || null;
+    const userDisplay = `${adminName}${adminPhone ? ` (${adminPhone})` : ''}`;
 
     const highestProduct = await this.prisma.product.findFirst({
       orderBy: { externalId: 'desc' },
@@ -320,10 +343,11 @@ export class CatalogService {
 
     let formattedTags: string | null = null;
     if (productData.tags) {
-      if (Array.isArray(productData.tags)) {
-        formattedTags = JSON.stringify(productData.tags.map((t: any) => String(t).trim()).filter(Boolean));
-      } else if (typeof productData.tags === 'string') {
-        const trimmed = productData.tags.trim();
+      const anyTags: any = productData.tags;
+      if (Array.isArray(anyTags)) {
+        formattedTags = JSON.stringify(anyTags.map((t: any) => String(t).trim()).filter(Boolean));
+      } else if (typeof anyTags === 'string') {
+        const trimmed = anyTags.trim();
         if (trimmed.startsWith('[')) {
           formattedTags = trimmed;
         } else {
@@ -348,10 +372,13 @@ export class CatalogService {
 
     await this.prisma.auditLog.create({
       data: {
-        action: `افزودن محصول جدید #${created.externalId}`,
-        details: `محصول جدید «${created.customTitle}» با موفقیت ثبت گردید.`,
-        user: author,
-        type: 'product_toggle',
+        action: `افزودن محصول جدید #${created.externalId} (${created.customTitle})`,
+        details: `محصول جدید «${created.customTitle}» توسط مدیر ${adminName} با موفقیت ثبت گردید.`,
+        user: userDisplay,
+        adminId,
+        adminName,
+        adminPhone,
+        type: 'product',
       },
     });
 
@@ -364,39 +391,53 @@ export class CatalogService {
     return created;
   }
 
-  async updateProduct(id: string, dto: UpdateProductDto, user = 'مدیر سیستم') {
+  async updateProduct(
+    id: string,
+    dto: UpdateProductDto,
+    admin?: { id?: string; name?: string; phone?: string; role?: string } | string,
+  ) {
     const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException('محصول یافت نشد.');
 
     const { user: userFromDto, ...dataToUpdate } = dto;
-    const author = userFromDto || user || 'مدیر سیستم';
+    const adminObj = typeof admin === 'object' && admin ? admin : null;
+    const adminName = adminObj?.name || userFromDto || (typeof admin === 'string' ? admin : 'مدیر سیستم');
+    const adminId = adminObj?.id || null;
+    const adminPhone = adminObj?.phone || null;
+    const userDisplay = `${adminName}${adminPhone ? ` (${adminPhone})` : ''}`;
 
-    if (dataToUpdate.tags !== undefined) {
-      if (Array.isArray(dataToUpdate.tags)) {
-        dataToUpdate.tags = JSON.stringify(dataToUpdate.tags.map((t: any) => String(t).trim()).filter(Boolean));
-      } else if (typeof dataToUpdate.tags === 'string') {
-        const trimmed = dataToUpdate.tags.trim();
+    const updatePayload: any = { ...dataToUpdate };
+
+    if (updatePayload.tags !== undefined) {
+      const anyTags: any = updatePayload.tags;
+      if (Array.isArray(anyTags)) {
+        updatePayload.tags = JSON.stringify(anyTags.map((t: any) => String(t).trim()).filter(Boolean));
+      } else if (typeof anyTags === 'string') {
+        const trimmed = anyTags.trim();
         if (trimmed.startsWith('[')) {
-          dataToUpdate.tags = trimmed;
+          updatePayload.tags = trimmed;
         } else {
-          dataToUpdate.tags = JSON.stringify(trimmed.split(',').map((t: string) => t.trim()).filter(Boolean));
+          updatePayload.tags = JSON.stringify(trimmed.split(',').map((t: string) => t.trim()).filter(Boolean));
         }
-      } else if (dataToUpdate.tags === null) {
-        dataToUpdate.tags = null;
+      } else if (anyTags === null) {
+        updatePayload.tags = null;
       }
     }
 
     const updated = await this.prisma.product.update({
       where: { id },
-      data: dataToUpdate,
+      data: updatePayload,
     });
 
     await this.prisma.auditLog.create({
       data: {
-        action: `ویرایش مشخصات محصول #${product.externalId}`,
-        details: `تغییرات روی محصول ${updated.customTitle} اعمال گردید.`,
-        user: author,
-        type: 'product_toggle',
+        action: `ویرایش مشخصات محصول #${product.externalId} (${product.customTitle})`,
+        details: `تغییرات روی محصول «${updated.customTitle}» توسط مدیر ${adminName} اعمال گردید.`,
+        user: userDisplay,
+        adminId,
+        adminName,
+        adminPhone,
+        type: 'product',
       },
     });
 
@@ -674,8 +715,18 @@ export class CatalogService {
     return { tag, action, updatedCount };
   }
 
-  async getCategories() {
+  async getCategories(onlyWithActiveProducts = false) {
+    const where: any = {};
+    if (onlyWithActiveProducts) {
+      where.products = {
+        some: {
+          isActive: true,
+        },
+      };
+    }
+
     const categories = await this.prisma.category.findMany({
+      where,
       orderBy: { orderIndex: 'asc' },
       include: {
         _count: {

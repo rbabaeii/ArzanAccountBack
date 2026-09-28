@@ -1,8 +1,10 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { SmsService } from '../sms/sms.service';
 import { CatalogService } from '../catalog/catalog.service';
+import { PricingService } from '../pricing/pricing.service';
+import { CouponsService } from '../coupons/coupons.service';
 import { CreateOrderDto, UpdateOrderStatusDto, ProcessRefundDto, RequestRefundDto, RejectRefundDto } from './orders.dto';
 
 @Injectable()
@@ -14,12 +16,23 @@ export class OrdersService {
     private readonly emailService: EmailService,
     private readonly smsService: SmsService,
     private readonly catalogService: CatalogService,
+    private readonly pricingService: PricingService,
+    private readonly couponsService: CouponsService,
   ) {}
 
-  async getOrders(params?: { status?: string; customerEmail?: string; limit?: number; offset?: number }) {
+  async getOrders(params?: { status?: string; customerEmail?: string; customerPhone?: string; limit?: number; offset?: number }) {
     const where: any = {};
     if (params?.status) where.status = params.status;
-    if (params?.customerEmail) where.customerEmail = params.customerEmail;
+    if (params?.customerEmail && params?.customerPhone) {
+      where.OR = [
+        { customerEmail: params.customerEmail },
+        { customerPhone: params.customerPhone },
+      ];
+    } else if (params?.customerEmail) {
+      where.customerEmail = params.customerEmail;
+    } else if (params?.customerPhone) {
+      where.customerPhone = params.customerPhone;
+    }
 
     const [orders, totalCount] = await Promise.all([
       this.prisma.order.findMany({
@@ -59,12 +72,15 @@ export class OrdersService {
     };
   }
 
-  async createOrder(dto: CreateOrderDto) {
+  async createOrder(dto: CreateOrderDto, authenticatedUser?: any) {
     if (!dto.items || !Array.isArray(dto.items) || dto.items.length === 0) {
       throw new BadRequestException('سبد خرید خالی است یا آیتمی ارسال نشده است.');
     }
 
-    // 1. Strict Stock and Active Status Validation Guard
+    let calculatedSubtotalToman = 0;
+    let calculatedSubtotalUsd = 0;
+
+    // 1. Strict Stock and Active Status Validation Guard & Server-Side Price Calculation
     for (const item of dto.items) {
       const productId = item.productId || item.id;
       if (!productId) {
@@ -72,23 +88,90 @@ export class OrdersService {
       }
       // Validates product existence, isActive status, live IRMarket stock, and local database stock
       await this.catalogService.validateLiveStock(String(productId), Number(item.quantity) || 1);
+
+      const prod = await this.prisma.product.findFirst({
+        where: {
+          OR: [{ id: String(productId) }, { externalId: isNaN(Number(productId)) ? -1 : Number(productId) }],
+        },
+      });
+
+      if (!prod) {
+        throw new BadRequestException(`محصول با شناسه ${productId} یافت نشد.`);
+      }
+
+      let unitPriceToman: number;
+      if (prod.salePriceToman && prod.salePriceToman > 0) {
+        unitPriceToman = prod.salePriceToman;
+      } else {
+        const pricing = await this.pricingService.calculatePrice(
+          prod.costPriceUsd,
+          prod.retailPriceUsd,
+          prod.customMarginPercent,
+          prod.pricingUnit,
+        );
+        unitPriceToman = pricing.finalToman;
+      }
+
+      const qty = Number(item.quantity) || 1;
+      calculatedSubtotalToman += unitPriceToman * qty;
+      calculatedSubtotalUsd += prod.costPriceUsd * qty;
+    }
+
+    // 2. Server-side coupon verification and discount application
+    let discountAppliedToman = 0;
+    let finalCalculatedToman = calculatedSubtotalToman;
+
+    if (dto.couponCode) {
+      try {
+        const couponRes = await this.couponsService.validateCoupon(
+          dto.couponCode,
+          authenticatedUser?.id,
+          authenticatedUser?.phone || dto.customerPhone,
+        );
+        const coupon = couponRes.coupon;
+        if (coupon.minOrderToman && calculatedSubtotalToman < coupon.minOrderToman) {
+          throw new BadRequestException(
+            `حداقل مبلغ سفارش برای اعمال این کد تخفیف ${new Intl.NumberFormat('fa-IR').format(coupon.minOrderToman)} تومان است.`,
+          );
+        }
+        let discount = Math.round((calculatedSubtotalToman * coupon.discountPercent) / 100);
+        if (coupon.maxDiscountToman && discount > coupon.maxDiscountToman) {
+          discount = coupon.maxDiscountToman;
+        }
+        discountAppliedToman = discount;
+        finalCalculatedToman = Math.max(0, calculatedSubtotalToman - discount);
+
+        // Atomic usage count increment
+        await this.prisma.coupon.update({
+          where: { id: coupon.id },
+          data: { usageCount: { increment: 1 } },
+        });
+      } catch (couponErr: any) {
+        throw new BadRequestException(couponErr?.message || 'کد تخفیف نامعتبر یا منقضی شده است.');
+      }
+    }
+
+    // Guard against client price tampering (CRIT-01)
+    if (Math.abs(finalCalculatedToman - dto.totalPriceToman) > 500) {
+      this.logger.warn(
+        `Price tampering detected for order ${dto.orderNumber || 'new'}: Client sent ${dto.totalPriceToman}, Server calculated ${finalCalculatedToman}`,
+      );
+      throw new BadRequestException(
+        'مبلغ سفارش با قیمت‌های روز سامانه همخوانی ندارد. لطفاً سبد خرید را مجدداً بروزرسانی فرمایید.',
+      );
     }
 
     const orderNumber = dto.orderNumber || `ORD-${Math.floor(100000 + Math.random() * 900000)}`;
 
+    const firstProductTitle = dto.items?.[0]?.productTitle || 'اشتراک دیجیتال';
     const isHybrid = Boolean(dto.isHybridOrder);
     let deliveryType = dto.deliveryType || 'link';
     if (dto.targetAccountEmail || dto.targetAccountPassword || (dto.accountCredentials && dto.accountCredentials.length > 0)) {
       deliveryType = 'account_activation';
     }
 
-    const firstProductTitle = dto.items?.[0]?.productTitle || 'اشتراک دیجیتال';
-    const isCartPayment = dto.paymentGateway === 'cartbecart';
-    const status = isCartPayment
-      ? 'pending'
-      : (deliveryType === 'account_activation' || isHybrid)
-      ? 'processing'
-      : 'delivered';
+    // Initial status MUST always start as pending (CRIT-02)
+    const status = 'pending';
 
     const order = await this.prisma.order.create({
       data: {
@@ -96,8 +179,8 @@ export class OrdersService {
         customerEmail: dto.customerEmail,
         customerPhone: dto.customerPhone || null,
         customerLink: dto.customerLink || null,
-        totalPriceToman: dto.totalPriceToman,
-        totalPriceUsd: dto.totalPriceUsd,
+        totalPriceToman: finalCalculatedToman,
+        totalPriceUsd: calculatedSubtotalUsd,
         status,
         deliveryType,
         targetAccountEmail: dto.targetAccountEmail || dto.accountCredentials?.[0]?.email || null,
@@ -107,8 +190,10 @@ export class OrdersService {
         instantItemsCount: dto.instantItemsCount || 0,
         activationItemsCount: dto.activationItemsCount || 0,
         items: JSON.stringify(dto.items || []),
-        deliveredAccounts: dto.deliveredAccounts ? JSON.stringify(dto.deliveredAccounts) : null,
-        paymentGateway: dto.paymentGateway || 'zarinpal',
+        deliveredAccounts: null, // CRIT-02: Never accept/store delivered accounts before payment verification
+        paymentGateway: dto.paymentGateway || 'cartbecart',
+        couponCode: dto.couponCode || null,
+        discountAppliedToman,
       },
     });
 
@@ -233,7 +318,7 @@ export class OrdersService {
     };
   }
 
-  async updateStatus(id: string, dto: UpdateOrderStatusDto) {
+  async updateStatus(id: string, dto: UpdateOrderStatusDto, adminUser?: string) {
     const order = await this.prisma.order.findFirst({
       where: { OR: [{ id }, { orderNumber: id }] },
     });
@@ -353,7 +438,7 @@ export class OrdersService {
         action: `تغییر وضعیت سفارش #${order.orderNumber} به ${dto.status}`,
         details: `وضعیت سفارش از ${previousStatus} به ${dto.status} توسط ${dto.adminName || 'مدیر سیستم'} تغییر یافت. ${dto.notes || ''}`,
         adminId: dto.adminId || null,
-        adminName: dto.adminName || 'مدیر سیستم',
+        adminName: dto.adminName || adminUser || 'مدیر سیستم',
         type: 'orders',
       },
     });
@@ -361,7 +446,7 @@ export class OrdersService {
     return updated;
   }
 
-  async requestRefund(id: string, dto: RequestRefundDto) {
+  async requestRefund(id: string, dto: RequestRefundDto, requestingUser?: any) {
     const order = await this.prisma.order.findFirst({
       where: {
         OR: [
@@ -373,6 +458,46 @@ export class OrdersService {
     });
 
     if (!order) throw new NotFoundException('سفارش یافت نشد.');
+
+    // IDOR Protection: Verify requesting user is the owner or SUPER_ADMIN
+    if (requestingUser) {
+      const isOwner =
+        (requestingUser.email && order.customerEmail && requestingUser.email.toLowerCase() === order.customerEmail.toLowerCase()) ||
+        (requestingUser.phone && order.customerPhone && requestingUser.phone === order.customerPhone);
+      const isSuperAdmin = requestingUser.role === 'SUPER_ADMIN';
+      if (!isOwner && !isSuperAdmin) {
+        throw new ForbiddenException('شما مجاز به درخواست عودت وجه برای سفارش کاربر دیگر نیستید.');
+      }
+    }
+
+    if (order.status === 'refunded') {
+      throw new BadRequestException('این سفارش پیش‌تر تسویه و عودت داده شده است.');
+    }
+    if (order.status === 'refund_requested') {
+      throw new BadRequestException('درخواست عودت وجه برای این سفارش قبلاً ثبت شده و در حال بررسی است.');
+    }
+
+    // Card hijacking protection: Verify card belongs to user if they have saved bank cards
+    if (dto.refundCardNumber && requestingUser?.id) {
+      const userRecord = await this.prisma.user.findUnique({ where: { id: requestingUser.id } });
+      if (userRecord && userRecord.bankCardsJson) {
+        try {
+          const userCards: any[] = JSON.parse(userRecord.bankCardsJson);
+          if (Array.isArray(userCards) && userCards.length > 0) {
+            const cleanCard = dto.refundCardNumber.replace(/\D/g, '');
+            const cardMatches = userCards.some((c: any) => {
+              const savedNumber = (c.cardNumber || c.number || '').replace(/\D/g, '');
+              return savedNumber && (savedNumber === cleanCard || cleanCard.endsWith(savedNumber.slice(-4)));
+            });
+            if (!cardMatches && requestingUser.role !== 'SUPER_ADMIN') {
+              throw new BadRequestException('شماره کارت عودت وجه باید با یکی از کارت‌های بانکی ثبت‌شده در پروفایل شما مطابقت داشته باشد.');
+            }
+          }
+        } catch (err: any) {
+          if (err instanceof BadRequestException) throw err;
+        }
+      }
+    }
 
     const updated = await this.prisma.order.update({
       where: { id: order.id },
@@ -427,6 +552,14 @@ export class OrdersService {
     });
 
     if (!order) throw new NotFoundException('سفارش مورد نظر یافت نشد.');
+
+    if (order.status === 'refunded') {
+      throw new BadRequestException('این سفارش پیش‌تر تسویه و عودت داده شده است.');
+    }
+
+    if (dto.refundAmountToman > order.totalPriceToman || dto.refundAmountToman <= 0) {
+      throw new BadRequestException('مبلغ عودت وجه نامعتبر بوده یا از مبلغ کل سفارش بیشتر است.');
+    }
 
     const isWalletRefund = dto.refundMethod === 'wallet';
     const trackingCode = isWalletRefund

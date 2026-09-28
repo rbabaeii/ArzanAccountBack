@@ -1,4 +1,56 @@
-import { IsString, IsNotEmpty, IsOptional, IsNumber, IsArray } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsNumber,
+  IsArray,
+  Min,
+  IsBoolean,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class OrderItemDto {
+  @IsString()
+  @IsOptional()
+  id?: string;
+
+  @IsString()
+  @IsOptional()
+  productId?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  productTitle: string;
+
+  @IsNumber()
+  @Min(1)
+  quantity: number;
+
+  @IsNumber()
+  @Min(0)
+  priceToman: number;
+
+  @IsNumber()
+  @Min(0)
+  priceUsd: number;
+}
+
+export class AccountCredentialDto {
+  @IsNumber()
+  index: number;
+
+  @IsString()
+  email: string;
+
+  @IsString()
+  @IsOptional()
+  password?: string;
+
+  @IsString()
+  @IsOptional()
+  productTitle?: string;
+}
 
 export class CreateOrderDto {
   @IsString()
@@ -14,13 +66,17 @@ export class CreateOrderDto {
   customerLink?: string;
 
   @IsNumber()
+  @Min(0)
   totalPriceToman: number;
 
   @IsNumber()
+  @Min(0)
   totalPriceUsd: number;
 
   @IsArray()
-  items: any[];
+  @ValidateNested({ each: true })
+  @Type(() => OrderItemDto)
+  items: OrderItemDto[];
 
   @IsString()
   @IsOptional()
@@ -40,24 +96,36 @@ export class CreateOrderDto {
 
   @IsArray()
   @IsOptional()
+  @IsString({ each: true })
   deliveredAccounts?: string[];
 
   @IsArray()
   @IsOptional()
-  accountCredentials?: any[];
+  @ValidateNested({ each: true })
+  @Type(() => AccountCredentialDto)
+  accountCredentials?: AccountCredentialDto[];
 
   @IsOptional()
+  @IsBoolean()
   isHybridOrder?: boolean;
 
   @IsOptional()
+  @IsNumber()
+  @Min(0)
   instantItemsCount?: number;
 
   @IsOptional()
+  @IsNumber()
+  @Min(0)
   activationItemsCount?: number;
 
   @IsString()
   @IsOptional()
   orderNumber?: string;
+
+  @IsString()
+  @IsOptional()
+  couponCode?: string;
 }
 
 export class UpdateOrderStatusDto {
@@ -78,7 +146,9 @@ export class UpdateOrderStatusDto {
   adminPhone?: string;
 
   @IsOptional()
-  deliveredAccounts?: any;
+  @IsArray()
+  @IsString({ each: true })
+  deliveredAccounts?: string[];
 
   @IsString()
   @IsOptional()
@@ -95,6 +165,7 @@ export class ProcessRefundDto {
   orderId: string;
 
   @IsNumber()
+  @Min(0)
   refundAmountToman: number;
 
   @IsString()

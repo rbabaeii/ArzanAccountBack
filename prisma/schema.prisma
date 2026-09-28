@@ -4,7 +4,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -89,6 +89,8 @@ model Order {
   isHybridOrder        Boolean?  @default(false)
   instantItemsCount    Int?      @default(0)
   activationItemsCount Int?      @default(0)
+  couponCode           String?
+  discountAppliedToman Int?      @default(0)
   refundReason         String?
   refundCardNumber     String?
   refundIban           String?
@@ -118,6 +120,7 @@ model Coupon {
   usageCount       Int      @default(0)
   maxUsage         Int?
   isActive         Boolean  @default(true)
+  allowedUserIds   String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }

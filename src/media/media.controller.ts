@@ -6,12 +6,16 @@ import {
   BadRequestException,
   Req,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import * as path from 'path';
 import * as fs from 'fs';
 import { Request } from 'express';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 
 const UPLOAD_ROOT = path.join(process.cwd(), 'uploads');
 
@@ -20,16 +24,17 @@ if (!fs.existsSync(UPLOAD_ROOT)) {
   fs.mkdirSync(UPLOAD_ROOT, { recursive: true });
 }
 
+// Disallow SVG to prevent Stored XSS via script execution
 const ALLOWED_MIME_TYPES = [
   'image/jpeg',
   'image/png',
   'image/webp',
-  'image/gif',
-  'image/svg+xml',
 ];
 
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+const MAX_FILE_SIZE = 3 * 1024 * 1024; // 3 MB max
 
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('SUPER_ADMIN', 'CATALOG_MANAGER', 'ADMIN')
 @Controller('upload')
 export class MediaController {
   @Post()
@@ -60,10 +65,13 @@ export class MediaController {
         fileSize: MAX_FILE_SIZE,
       },
       fileFilter: (req, file, cb) => {
-        if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+        const allowedExts = ['.jpg', '.jpeg', '.png', '.webp'];
+        const ext = path.extname(file.originalname).toLowerCase();
+
+        if (!ALLOWED_MIME_TYPES.includes(file.mimetype) || !allowedExts.includes(ext)) {
           return cb(
             new BadRequestException(
-              'فرمت فایل پشتیبانی نمی‌شود. لطفاً تصویری با فرمت JPEG، PNG، WEBP یا SVG انتخاب کنید.',
+              'فرمت فایل پشتیبانی نمی‌شود. لطفاً تصویری با فرمت JPEG، PNG یا WEBP انتخاب فرمایید.',
             ),
             false,
           );

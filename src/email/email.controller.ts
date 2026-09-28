@@ -1,7 +1,21 @@
-import { Controller, Get, Put, Post, Body, Query, Param } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Put,
+  Post,
+  Body,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { EmailService, SmtpConfig } from './email.service';
 import { ApiResponse } from '../common/dto/api-response.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('SUPER_ADMIN')
 @Controller('email')
 export class EmailController {
   constructor(private readonly emailService: EmailService) {}
@@ -13,8 +27,14 @@ export class EmailController {
   }
 
   @Put('settings')
-  async updateSettings(@Body() body: { config: Partial<SmtpConfig>; user?: string }) {
-    const updated = await this.emailService.updateSettings(body.config, body.user || 'مدیر ارشد');
+  async updateSettings(
+    @Body() body: { config: Partial<SmtpConfig>; user?: string },
+    @CurrentUser('name') userName?: string,
+  ) {
+    const updated = await this.emailService.updateSettings(
+      body.config,
+      userName || body.user || 'مدیر ارشد',
+    );
     return ApiResponse.success(updated, 'تنظیمات سرور ایمیل با موفقیت ذخیره و اعمال شد.');
   }
 
@@ -52,6 +72,7 @@ export class EmailController {
     return ApiResponse.success(data);
   }
 
+  @Roles('SUPER_ADMIN', 'FINANCE_ADMIN')
   @Post('send-order-receipt')
   async sendOrderReceipt(@Body() body: any) {
     if (!body.customerEmail || !body.orderNumber) {
@@ -77,6 +98,7 @@ export class EmailController {
       buttonUrl?: string;
       adminSender?: string;
     },
+    @CurrentUser('name') userName?: string,
   ) {
     if (!body.recipientEmail || !body.recipientEmail.includes('@')) {
       return ApiResponse.error('آدرس ایمیل گیرنده نامعتبر است.');
@@ -88,7 +110,10 @@ export class EmailController {
       return ApiResponse.error('متن ایمیل نمی‌تواند خالی باشد.');
     }
 
-    const result = await this.emailService.sendCustomUserEmail(body);
+    const result = await this.emailService.sendCustomUserEmail({
+      ...body,
+      adminSender: userName || body.adminSender || 'مدیر ارشد',
+    });
     if (!result.success) {
       return ApiResponse.error(result.error || 'ارسال ایمیل سفارشی با خطا مواجه شد.');
     }

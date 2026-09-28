@@ -1,16 +1,21 @@
-import { IsOptional, IsString, IsNumber, IsBoolean } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsBoolean, IsArray, MaxLength, Min, Max, IsIn, IsNotEmpty } from 'class-validator';
+import { SanitizeHtml } from '../common/decorators/sanitize-html.decorator';
+import { SanitizeText } from '../common/decorators/sanitize.decorator';
 
 export class UpdateProductDto {
   @IsOptional()
   @IsString()
+  @SanitizeText()
   customTitle?: string;
 
   @IsOptional()
   @IsString()
+  @SanitizeHtml()
   description?: string;
 
   @IsOptional()
   @IsString()
+  @SanitizeHtml()
   persianDescription?: string;
 
   @IsOptional()
@@ -23,14 +28,17 @@ export class UpdateProductDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   costPriceUsd?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   retailPriceUsd?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   customMarginPercent?: number;
 
   @IsOptional()
@@ -39,6 +47,7 @@ export class UpdateProductDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   stockCount?: number;
 
   @IsOptional()
@@ -47,14 +56,17 @@ export class UpdateProductDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   pricePer1000Usd?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   minQty?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   maxQty?: number;
 
   @IsOptional()
@@ -91,14 +103,19 @@ export class UpdateProductDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   salePriceToman?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(100)
   discountPercent?: number;
 
   @IsOptional()
-  tags?: any;
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
 
   @IsOptional()
   @IsString()
@@ -106,22 +123,28 @@ export class UpdateProductDto {
 }
 
 export class CreateProductDto {
+  @IsNotEmpty()
   @IsString()
+  @SanitizeText()
   customTitle: string;
 
   @IsOptional()
   @IsString()
+  @SanitizeText()
   name?: string;
 
   @IsNumber()
+  @Min(0)
   costPriceUsd: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   retailPriceUsd?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   customMarginPercent?: number;
 
   @IsOptional()
@@ -130,10 +153,12 @@ export class CreateProductDto {
 
   @IsOptional()
   @IsString()
+  @SanitizeHtml()
   description?: string;
 
   @IsOptional()
   @IsString()
+  @SanitizeHtml()
   persianDescription?: string;
 
   @IsOptional()
@@ -150,14 +175,17 @@ export class CreateProductDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   minQty?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   maxQty?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   stockCount?: number;
 
   @IsOptional()
@@ -194,14 +222,19 @@ export class CreateProductDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   salePriceToman?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(100)
   discountPercent?: number;
 
   @IsOptional()
-  tags?: any;
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
 
   @IsOptional()
   @IsString()
@@ -209,10 +242,14 @@ export class CreateProductDto {
 }
 
 export class CreateTagDto {
+  @IsNotEmpty()
   @IsString()
+  @SanitizeText()
   tag: string;
 
   @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
   productIds?: string[];
 
   @IsOptional()
@@ -221,10 +258,14 @@ export class CreateTagDto {
 }
 
 export class RenameTagDto {
+  @IsNotEmpty()
   @IsString()
+  @SanitizeText()
   oldTag: string;
 
+  @IsNotEmpty()
   @IsString()
+  @SanitizeText()
   newTag: string;
 
   @IsOptional()
@@ -233,13 +274,19 @@ export class RenameTagDto {
 }
 
 export class AssignTagDto {
+  @IsNotEmpty()
   @IsString()
+  @SanitizeText()
   tag: string;
 
+  @IsArray()
+  @IsString({ each: true })
+  @IsNotEmpty()
   productIds: string[];
 
   @IsOptional()
   @IsString()
+  @IsIn(['add', 'remove'])
   action?: 'add' | 'remove';
 
   @IsOptional()
@@ -248,18 +295,24 @@ export class AssignTagDto {
 }
 
 export class CreateCategoryDto {
+  @IsNotEmpty()
   @IsString()
+  @SanitizeText()
   title: string;
 
   @IsOptional()
   @IsString()
+  @SanitizeText()
   titleFa?: string;
 
+  @IsNotEmpty()
   @IsString()
+  @SanitizeText()
   slug: string;
 
   @IsOptional()
   @IsString()
+  @SanitizeHtml()
   description?: string;
 
   @IsOptional()
@@ -270,18 +323,22 @@ export class CreateCategoryDto {
 export class UpdateCategoryDto {
   @IsOptional()
   @IsString()
+  @SanitizeText()
   title?: string;
 
   @IsOptional()
   @IsString()
+  @SanitizeText()
   titleFa?: string;
 
   @IsOptional()
   @IsString()
+  @SanitizeText()
   slug?: string;
 
   @IsOptional()
   @IsString()
+  @SanitizeHtml()
   description?: string;
 
   @IsOptional()
@@ -290,5 +347,6 @@ export class UpdateCategoryDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
   orderIndex?: number;
 }

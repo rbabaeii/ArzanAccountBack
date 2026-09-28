@@ -1,8 +1,13 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
 import { IrMarketService } from './irmarket.service';
 import { ApiResponse } from '../common/dto/api-response.dto';
 import { IrMarketPurchaseRequest } from './irmarket.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('SUPER_ADMIN')
 @Controller('irmarket')
 export class IrMarketController {
   constructor(private readonly irMarketService: IrMarketService) {}
