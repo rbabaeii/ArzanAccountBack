@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { SmsService } from './sms.service';
 import { SmsConfig } from './sms.types';
+import { UpdateSmsSettingsDto, SendTestSmsDto, SendCouponSmsDto } from './sms.dto';
 import { ApiResponse } from '../common/dto/api-response.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -29,27 +30,18 @@ export class SmsController {
 
   @Put('settings')
   async updateSettings(
-    @Body() body: { config: Partial<SmsConfig>; user?: string },
+    @Body() body: UpdateSmsSettingsDto,
     @CurrentUser('name') userName?: string,
   ) {
-    if (!body?.config) {
-      return ApiResponse.error('اطلاعات پیکربندی ارسال نشده است.');
-    }
     const updated = await this.smsService.updateSettings(
-      body.config,
+      body.config as Partial<SmsConfig>,
       userName || body.user || 'مدیر ارشد',
     );
     return ApiResponse.success(updated, 'تنظیمات وب‌سرویس پیامک با موفقیت ذخیره شد.');
   }
 
   @Post('test')
-  async sendTest(@Body() body: { to: string; bodyId: number; args?: (string | number)[] }) {
-    if (!body.to) {
-      return ApiResponse.error('وارد کردن شماره تلفن همراه گیرنده الزامی است.');
-    }
-    if (!body.bodyId) {
-      return ApiResponse.error('انتخاب یا ورود کد الگو (bodyId) الزامی است.');
-    }
+  async sendTest(@Body() body: SendTestSmsDto) {
     const result = await this.smsService.sendTestSms(body.to, Number(body.bodyId), body.args || []);
     if (!result.success) {
       return ApiResponse.error(result.errorMessage || 'ارسال پیامک آزمایشی با خطا مواجه شد.');
@@ -58,18 +50,7 @@ export class SmsController {
   }
 
   @Post('send-coupon')
-  async sendCoupon(
-    @Body()
-    body: {
-      phone: string;
-      code: string;
-      discountPercent: number;
-      customerName?: string;
-    },
-  ) {
-    if (!body.phone) {
-      return ApiResponse.error('وارد کردن شماره موبایل الزامی است.');
-    }
+  async sendCoupon(@Body() body: SendCouponSmsDto) {
     const result = await this.smsService.sendCouponSms(
       body.phone,
       body.code,

@@ -24,11 +24,15 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Public } from '../common/decorators/public.decorator';
+import { Throttle } from '@nestjs/throttler';
 
 @Controller('catalog')
 export class CatalogController {
   constructor(private readonly catalogService: CatalogService) {}
 
+  @UseGuards(JwtAuthGuard)
+  @Public()
   @Get('products')
   async getProducts(
     @Query('isActive') isActive?: string,
@@ -38,31 +42,47 @@ export class CatalogController {
     @Query('isFeatured') isFeatured?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
+    @CurrentUser() user?: any,
   ) {
-    const data = await this.catalogService.getProducts({
-      isActive: isActive !== undefined ? isActive === 'true' : undefined,
-      categoryId,
-      search,
-      isFlashDeal: isFlashDeal !== undefined ? isFlashDeal === 'true' : undefined,
-      isFeatured: isFeatured !== undefined ? isFeatured === 'true' : undefined,
-      limit: limit ? Number(limit) : undefined,
-      offset: offset ? Number(offset) : undefined,
-    });
+    const isAdmin = Boolean(
+      user && ['SUPER_ADMIN', 'CATALOG_MANAGER', 'FINANCE_ADMIN', 'ADMIN'].includes(user.role),
+    );
+    const data = await this.catalogService.getProducts(
+      {
+        isActive: isActive !== undefined ? isActive === 'true' : undefined,
+        categoryId,
+        search,
+        isFlashDeal: isFlashDeal !== undefined ? isFlashDeal === 'true' : undefined,
+        isFeatured: isFeatured !== undefined ? isFeatured === 'true' : undefined,
+        limit: limit ? Number(limit) : undefined,
+        offset: offset ? Number(offset) : undefined,
+      },
+      isAdmin,
+    );
     return ApiResponse.success(data);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Public()
   @Get('products/:id')
-  async getProduct(@Param('id') id: string) {
-    const product = await this.catalogService.getProductById(id);
+  async getProduct(@Param('id') id: string, @CurrentUser() user?: any) {
+    const isAdmin = Boolean(
+      user && ['SUPER_ADMIN', 'CATALOG_MANAGER', 'FINANCE_ADMIN', 'ADMIN'].includes(user.role),
+    );
+    const product = await this.catalogService.getProductById(id, isAdmin);
     return ApiResponse.success(product);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'CATALOG_MANAGER')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Get('products/:id/live-sync')
   async getLiveProduct(@Param('id') id: string) {
     const product = await this.catalogService.getLiveProduct(id);
     return ApiResponse.success(product, 'استعلام زنده محصول از تأمین‌کننده با موفقیت انجام شد.');
   }
 
+  @Throttle({ default: { limit: 15, ttl: 60000 } })
   @Post('products/:id/validate-stock')
   async validateStock(
     @Param('id') id: string,

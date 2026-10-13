@@ -5,6 +5,7 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import * as path from 'path';
 
 import helmet from 'helmet';
+import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -14,7 +15,20 @@ async function bootstrap() {
   app.use(
     helmet({
       crossOriginResourcePolicy: { policy: 'cross-origin' },
-      contentSecurityPolicy: false,
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'https:', 'blob:'],
+          connectSrc: ["'self'", 'https:', 'http://localhost:*', 'http://127.0.0.1:*', 'ws:', 'wss:'],
+          fontSrc: ["'self'", 'https:', 'data:'],
+          objectSrc: ["'none'"],
+          frameAncestors: ["'self'"],
+          baseUri: ["'self'"],
+          formAction: ["'self'"],
+        },
+      },
     }),
   );
 
@@ -35,6 +49,9 @@ async function bootstrap() {
       transformOptions: { enableImplicitConversion: true },
     }),
   );
+
+  // Global Exception Filter for Database & Prisma Errors
+  app.useGlobalFilters(new PrismaExceptionFilter());
 
   // CORS for Next.js Storefront & Admin
   app.enableCors({

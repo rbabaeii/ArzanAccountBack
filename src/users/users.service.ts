@@ -9,6 +9,7 @@ import {
   formatSheba,
 } from '../common/utils/iranian-banks';
 import { CreateUserDto, UpdateUserRoleDto, UpdateUserStatusDto, UpdateProfileDto, CreateWithdrawalDto, ProcessWithdrawalDto } from './users.dto';
+import * as bcrypt from 'bcryptjs';
 
 @Injectable()
 export class UsersService {
@@ -19,6 +20,12 @@ export class UsersService {
     private readonly emailService: EmailService,
     private readonly smsService: SmsService,
   ) {}
+
+  sanitizeUser(user: any) {
+    if (!user) return null;
+    const { password, ...safeUser } = user;
+    return safeUser;
+  }
 
   async getUsers(params?: {
     role?: string;
@@ -49,14 +56,14 @@ export class UsersService {
       this.prisma.user.findMany({
         where,
         orderBy: [{ role: 'asc' }, { createdAt: 'desc' }],
-        take: params?.limit ? Number(params.limit) : 50,
-        skip: params?.offset ? Number(params.offset) : 0,
+        take: Math.min(100, Math.max(1, Number(params?.limit) || 50)),
+        skip: Math.max(0, Number(params?.offset) || 0),
       }),
       this.prisma.user.count({ where }),
     ]);
 
     return {
-      users,
+      users: users.map((u) => this.sanitizeUser(u)),
       totalCount,
     };
   }
@@ -64,7 +71,7 @@ export class UsersService {
   async getUserById(id: string) {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('کاربر یافت نشد.');
-    return user;
+    return this.sanitizeUser(user);
   }
 
   async getUserStats() {
@@ -84,12 +91,13 @@ export class UsersService {
   }
 
   async createUser(dto: CreateUserDto, author = 'مدیر سیستم') {
+    const hashedPassword = dto.password ? bcrypt.hashSync(dto.password, 10) : null;
     const user = await this.prisma.user.create({
       data: {
         name: dto.name,
         email: dto.email,
         phone: dto.phone,
-        password: dto.password,
+        password: hashedPassword,
         role: dto.role || 'USER',
         status: dto.status || 'ACTIVE',
         isTwoFactorEnabled: dto.isTwoFactorEnabled ?? false,
@@ -106,7 +114,7 @@ export class UsersService {
       },
     });
 
-    return user;
+    return this.sanitizeUser(user);
   }
 
   async updateUserRole(id: string, dto: UpdateUserRoleDto, author = 'مدیر سیستم') {
@@ -122,12 +130,12 @@ export class UsersService {
       data: {
         action: `تغییر سطح دسترسی کاربر (${user.name})`,
         details: `نقش کاربری از ${user.role} به ${dto.role} تغییر یافت.`,
-        user: dto.adminUser || author,
+        user: author,
         type: 'security',
       },
     });
 
-    return updated;
+    return this.sanitizeUser(updated);
   }
 
   async updateUserStatus(id: string, dto: UpdateUserStatusDto, author = 'مدیر سیستم') {
@@ -143,25 +151,42 @@ export class UsersService {
       data: {
         action: `تغییر وضعیت حساب کاربر (${user.name})`,
         details: `وضعیت حساب به ${dto.status === 'ACTIVE' ? 'فعال' : 'مسدود'} تغییر یافت.`,
-        user: dto.adminUser || author,
+        user: author,
         type: 'security',
       },
     });
 
-    return updated;
+    return this.sanitizeUser(updated);
   }
 
-  async deleteUser(id: string, author = 'مدیر سیستم') {
+  async deleteUser(id: string, authorAdmin?: any) {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('کاربر یافت نشد.');
 
+    const authorId = typeof authorAdmin === 'string' ? authorAdmin : (authorAdmin?.id || authorAdmin?.sub);
+    if (authorId && authorId === id) {
+      throw new BadRequestException('امکان حذف حساب کاربری خودتان وجود ندارد.');
+    }
+
+    if (user.role === 'SUPER_ADMIN') {
+      const superAdminCount = await this.prisma.user.count({ where: { role: 'SUPER_ADMIN' } });
+      if (superAdminCount <= 1) {
+        throw new BadRequestException('امکان حذف آخرین مدیر ارشد سامانه وجود ندارد.');
+      }
+    }
+
+    // Safely remove any dependent withdrawal requests to prevent P2003 FK constraint crash
+    await this.prisma.withdrawalRequest.deleteMany({ where: { userId: id } });
+
     await this.prisma.user.delete({ where: { id } });
+
+    const authorName = typeof authorAdmin === 'string' ? authorAdmin : (authorAdmin?.name || authorAdmin?.phone || 'مدیر ارشد');
 
     await this.prisma.auditLog.create({
       data: {
         action: `حذف حساب کاربری (${user.name})`,
         details: `حساب کاربری ${user.name} (${user.email || user.phone}) حذف گردید.`,
-        user: author,
+        user: authorName,
         type: 'security',
       },
     });
@@ -229,8 +254,8 @@ export class UsersService {
       this.prisma.auditLog.findMany({
         where,
         orderBy: { createdAt: sortOrder },
-        take: params?.limit ? Number(params.limit) : 50,
-        skip: params?.offset ? Number(params.offset) : 0,
+        take: Math.min(100, Math.max(1, Number(params?.limit) || 50)),
+        skip: Math.max(0, Number(params?.offset) || 0),
       }),
       this.prisma.auditLog.count({ where }),
     ]);
@@ -313,14 +338,41 @@ export class UsersService {
     };
   }
 
-  async updateProfile(id: string, dto: UpdateProfileDto) {
+  async updateProfile(id: string, dto: UpdateProfileDto, authorAdmin?: any) {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('کاربر یافت نشد.');
 
     const dataToUpdate: any = {};
     if (dto.name !== undefined) dataToUpdate.name = dto.name.trim();
-    if (dto.email !== undefined) dataToUpdate.email = dto.email?.trim() || null;
-    if (dto.phone !== undefined) dataToUpdate.phone = dto.phone?.trim() || null;
+    if (dto.email !== undefined) {
+      const cleanEmail = dto.email?.trim().toLowerCase() || null;
+      if (cleanEmail && cleanEmail !== user.email) {
+        const existingEmail = await this.prisma.user.findFirst({
+          where: { email: cleanEmail, id: { not: id } },
+        });
+        if (existingEmail) {
+          throw new BadRequestException('این آدرس ایمیل پیش‌تر برای کاربر دیگری ثبت شده است.');
+        }
+      }
+      dataToUpdate.email = cleanEmail;
+    }
+    if (dto.phone !== undefined) {
+      const cleanPhone = dto.phone?.trim() || null;
+      if (cleanPhone && cleanPhone !== user.phone) {
+        // Enforce anti-account-takeover guard: regular users cannot directly hijack or change primary login phone without 2FA
+        const isSuperAdmin = authorAdmin && authorAdmin.role === 'SUPER_ADMIN';
+        if (!isSuperAdmin) {
+          throw new BadRequestException('امکان تغییر مستقیم شماره تلفن همراه وجود ندارد. جهت تغییر شماره ورود، لطفاً با پشتیبانی سامانه هماهنگ فرمایید.');
+        }
+        const existingPhone = await this.prisma.user.findFirst({
+          where: { phone: cleanPhone, id: { not: id } },
+        });
+        if (existingPhone) {
+          throw new BadRequestException('این شماره تلفن همراه پیش‌تر برای کاربر دیگری ثبت شده است.');
+        }
+        dataToUpdate.phone = cleanPhone;
+      }
+    }
     if (dto.nationalCode !== undefined) dataToUpdate.nationalCode = dto.nationalCode?.trim() || null;
     if (dto.birthDate !== undefined) dataToUpdate.birthDate = dto.birthDate?.trim() || null;
     if (dto.jobTitle !== undefined) dataToUpdate.jobTitle = dto.jobTitle?.trim() || null;
@@ -343,7 +395,7 @@ export class UsersService {
       },
     });
 
-    return updated;
+    return this.sanitizeUser(updated);
   }
 
   async topUpWallet(id: string, amountToman: number) {
@@ -378,7 +430,7 @@ export class UsersService {
         .catch((err) => this.logger.warn(`Failed to send wallet topup SMS to ${user.phone}: ${err?.message}`));
     }
 
-    return updated;
+    return this.sanitizeUser(updated);
   }
 
   /**
@@ -464,18 +516,43 @@ export class UsersService {
       throw new BadRequestException('نام و نام‌خانوادگی صاحب حساب الزامی است (حداقل ۳ حرف).');
     }
 
-    // 7. Atomic Balance Deduction & Hold (Guaranteed Double-Spending Prevention)
+    // 7. Atomic Balance Deduction & Hold (Guaranteed Double-Spending & Race Condition Prevention)
     const result = await this.prisma.$transaction(async (tx) => {
-      const newDirect = user.directDepositBalance - amount;
-      const newTotal = (user.walletBalanceToman || 0) - amount;
+      // Re-verify pending request inside the transaction to eliminate race window
+      const pendingInTx = await tx.withdrawalRequest.findFirst({
+        where: { userId, status: 'PENDING' },
+      });
+      if (pendingInTx) {
+        throw new BadRequestException(
+          `شما یک درخواست تسویه در حال بررسی دارید (#${pendingInTx.id.slice(-6).toUpperCase()}). لطفاً تا تعیین تکلیف نهایی آن توسط واحد مالی شکیبا باشید.`
+        );
+      }
 
-      await tx.user.update({
-        where: { id: user.id },
+      // Atomic conditional decrement: only succeeds if directDepositBalance >= amount, status == ACTIVE, and no active pending withdrawal
+      const updateResult = await tx.user.updateMany({
+        where: {
+          id: userId,
+          directDepositBalance: { gte: amount },
+          status: 'ACTIVE',
+          OR: [
+            { hasPendingWithdrawal: false },
+            { hasPendingWithdrawal: null },
+          ],
+        },
         data: {
-          directDepositBalance: Math.max(0, newDirect),
-          walletBalanceToman: Math.max(0, newTotal),
+          directDepositBalance: { decrement: amount },
+          walletBalanceToman: { decrement: amount },
+          hasPendingWithdrawal: true,
         },
       });
+
+      if (updateResult.count === 0) {
+        const currentUser = await tx.user.findUnique?.({ where: { id: userId } });
+        if (currentUser?.hasPendingWithdrawal) {
+          throw new BadRequestException('شما یک درخواست تسویه در حال بررسی دارید. لطفاً تا تعیین تکلیف نهایی آن توسط واحد مالی شکیبا باشید.');
+        }
+        throw new BadRequestException('موجودی مستقیم قابل تسویه شما کافی نیست یا تراکنش دیگری در حال انجام است.');
+      }
 
       const newRequest = await tx.withdrawalRequest.create({
         data: {
@@ -576,8 +653,8 @@ export class UsersService {
           },
         },
         orderBy: { createdAt: 'desc' },
-        take: params?.limit ? Number(params.limit) : 50,
-        skip: params?.offset ? Number(params.offset) : 0,
+        take: Math.min(100, Math.max(1, Number(params?.limit) || 50)),
+        skip: Math.max(0, Number(params?.offset) || 0),
       }),
       this.prisma.withdrawalRequest.count({ where }),
     ]);
@@ -595,7 +672,7 @@ export class UsersService {
    * 2. If APPROVE: bankTrackingCode required, updates status, dispatches automated email
    * 3. If REJECT: adminNote required, ATOMIC BALANCE RESTORATION, dispatches automated email
    */
-  async processWithdrawal(id: string, dto: ProcessWithdrawalDto) {
+  async processWithdrawal(id: string, dto: ProcessWithdrawalDto, adminUser?: any) {
     const request = await this.prisma.withdrawalRequest.findUnique({
       where: { id },
       include: { user: true },
@@ -608,8 +685,10 @@ export class UsersService {
       );
     }
 
-    const adminName = dto.adminName || 'مدیر مالی';
-    const adminId = dto.adminId || null;
+    const adminName = adminUser
+      ? (adminUser.name || adminUser.phone || adminUser.email || 'مدیر مالی')
+      : (dto.adminName || 'مدیر مالی');
+    const adminId = adminUser ? (adminUser.id || adminUser.sub || null) : (dto.adminId || null);
 
     if (dto.action === 'APPROVE') {
       if (!dto.bankTrackingCode || !dto.bankTrackingCode.trim()) {
@@ -619,18 +698,31 @@ export class UsersService {
       const trackingCode = dto.bankTrackingCode.trim();
       const receiptUrl = dto.bankReceiptUrl?.trim() || null;
 
-      const updatedRequest = await this.prisma.withdrawalRequest.update({
-        where: { id },
-        data: {
-          status: 'APPROVED',
-          adminNote: dto.adminNote?.trim() || null,
-          bankTrackingCode: trackingCode,
-          bankReceiptUrl: receiptUrl,
-          processedByAdminName: adminName,
-          processedByAdminId: adminId,
-          processedAt: new Date(),
-        },
-        include: { user: true },
+      const updatedRequest = await this.prisma.$transaction(async (tx) => {
+        const updateRes = await tx.withdrawalRequest.updateMany({
+          where: { id, status: 'PENDING' },
+          data: {
+            status: 'APPROVED',
+            adminNote: dto.adminNote?.trim() || null,
+            bankTrackingCode: trackingCode,
+            bankReceiptUrl: receiptUrl,
+            processedByAdminName: adminName,
+            processedByAdminId: adminId,
+            processedAt: new Date(),
+          },
+        });
+
+        if (updateRes.count === 0) {
+          throw new BadRequestException('این درخواست تسویه قبلاً تعیین تکلیف شده است.');
+        }
+
+        // Release pending hold on user
+        await tx.user.update({
+          where: { id: request.userId },
+          data: { hasPendingWithdrawal: false },
+        });
+
+        return tx.withdrawalRequest.findUnique({ where: { id }, include: { user: true } });
       });
 
       await this.prisma.auditLog.create({
@@ -684,19 +776,10 @@ export class UsersService {
 
       const rejectionReason = dto.adminNote.trim();
 
-      // ATOMIC TRANSACTION: Restore held funds back to user balances
+      // ATOMIC TRANSACTION: Restore held funds back to user balances ONLY if status is still PENDING
       const updatedRequest = await this.prisma.$transaction(async (tx) => {
-        // Restore directDepositBalance and walletBalanceToman
-        await tx.user.update({
-          where: { id: request.userId },
-          data: {
-            directDepositBalance: { increment: request.amountToman },
-            walletBalanceToman: { increment: request.amountToman },
-          },
-        });
-
-        const updated = await tx.withdrawalRequest.update({
-          where: { id },
+        const updateRes = await tx.withdrawalRequest.updateMany({
+          where: { id, status: 'PENDING' },
           data: {
             status: 'REJECTED',
             adminNote: rejectionReason,
@@ -704,7 +787,20 @@ export class UsersService {
             processedByAdminId: adminId,
             processedAt: new Date(),
           },
-          include: { user: true },
+        });
+
+        if (updateRes.count === 0) {
+          throw new BadRequestException('این درخواست تسویه قبلاً تعیین تکلیف شده است.');
+        }
+
+        // Restore directDepositBalance, walletBalanceToman, and release pending hold
+        await tx.user.update({
+          where: { id: request.userId },
+          data: {
+            directDepositBalance: { increment: request.amountToman },
+            walletBalanceToman: { increment: request.amountToman },
+            hasPendingWithdrawal: false,
+          },
         });
 
         await tx.auditLog.create({
@@ -718,7 +814,7 @@ export class UsersService {
           },
         });
 
-        return updated;
+        return tx.withdrawalRequest.findUnique({ where: { id }, include: { user: true } });
       });
 
       // Send automated rejection notification email to user (non-blocking)
@@ -760,20 +856,47 @@ export class UsersService {
     }
   }
 
-  async convertPoints(id: string, points: number) {
+  async convertPoints(id: string, rawPoints: number) {
+    const points = Math.floor(Number(rawPoints));
+    if (isNaN(points) || points < 10) {
+      throw new BadRequestException('حداقل امتیاز مجاز برای تبدیل ۱۰ امتیاز می‌باشد.');
+    }
+
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('کاربر یافت نشد.');
 
     const currentPoints = user.clubPoints || 0;
     if (currentPoints < points) {
-      throw new Error('امتیاز کلاب شما برای این تبدیل کافی نیست.');
+      throw new BadRequestException('امتیاز کلاب شما برای این تبدیل کافی نیست.');
     }
 
     const remainingPoints = currentPoints - points;
     const discountPercent = Math.min(30, Math.max(5, Math.floor(points / 10)));
     const couponCode = `CLUB-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
-    await this.prisma.coupon.create({
+    // Concurrency & Double-spending Guard: Atomic decrement if user.updateMany exists
+    if (this.prisma.user.updateMany) {
+      const updateResult = await this.prisma.user.updateMany({
+        where: {
+          id,
+          clubPoints: { gte: points },
+        },
+        data: {
+          clubPoints: { decrement: points },
+        },
+      });
+
+      if (updateResult.count === 0) {
+        throw new BadRequestException('امتیاز کلاب شما برای این تبدیل کافی نیست.');
+      }
+    } else {
+      await this.prisma.user.update({
+        where: { id },
+        data: { clubPoints: remainingPoints },
+      });
+    }
+
+    const createdCoupon = await this.prisma.coupon.create({
       data: {
         code: couponCode,
         discountPercent,
@@ -781,17 +904,15 @@ export class UsersService {
         minOrderToman: 100000,
         maxUsage: 1,
         isActive: true,
+        allowedUserIds: JSON.stringify([id]),
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       },
     });
 
-    const updated = await this.prisma.user.update({
-      where: { id },
-      data: { clubPoints: remainingPoints },
-    });
+    const updated = await this.prisma.user.findUnique({ where: { id } });
 
     return {
-      user: updated,
+      user: this.sanitizeUser(updated) || this.sanitizeUser({ ...user, clubPoints: remainingPoints }),
       coupon: {
         code: couponCode,
         discountPercent,
@@ -843,7 +964,7 @@ export class UsersService {
       },
     });
 
-    return updated;
+    return this.sanitizeUser(updated);
   }
 
   /**
@@ -890,25 +1011,38 @@ export class UsersService {
     let totalOrdersCount = 0;
     let totalSpentByReferrals = 0;
 
-    for (const refUser of referredUsers) {
-      const conditions: any[] = [];
-      if (refUser.phone) conditions.push({ customerPhone: refUser.phone });
-      if (refUser.email) conditions.push({ customerEmail: refUser.email });
+    // Batch fetch all completed/delivered orders for all referred users in a single O(1) query
+    const phones = referredUsers.map((u) => u.phone?.trim()).filter(Boolean) as string[];
+    const emails = referredUsers.map((u) => u.email?.trim().toLowerCase()).filter(Boolean) as string[];
 
-      let orders: any[] = [];
-      if (conditions.length > 0) {
-        orders = await this.prisma.order.findMany({
-          where: {
-            OR: conditions,
-            status: { in: ['completed', 'delivered'] },
-          },
-          select: {
-            id: true,
-            totalPriceToman: true,
-            createdAt: true,
-          },
-        });
-      }
+    const searchConditions: any[] = [];
+    if (phones.length > 0) searchConditions.push({ customerPhone: { in: phones } });
+    if (emails.length > 0) searchConditions.push({ customerEmail: { in: emails } });
+
+    let allCompletedOrders: any[] = [];
+    if (searchConditions.length > 0) {
+      allCompletedOrders = await this.prisma.order.findMany({
+        where: {
+          OR: searchConditions,
+          status: { in: ['completed', 'delivered'] },
+        },
+        select: {
+          id: true,
+          customerPhone: true,
+          customerEmail: true,
+          totalPriceToman: true,
+          createdAt: true,
+        },
+      });
+    }
+
+    for (const refUser of referredUsers) {
+      const userPhone = refUser.phone?.trim();
+      const userEmail = refUser.email?.trim().toLowerCase();
+
+      const orders = allCompletedOrders.filter((o) => {
+        return (userPhone && o.customerPhone === userPhone) || (userEmail && o.customerEmail?.toLowerCase() === userEmail);
+      });
 
       const ordersCount = orders.length;
       const totalSpentToman = orders.reduce((sum, o) => sum + (o.totalPriceToman || 0), 0);

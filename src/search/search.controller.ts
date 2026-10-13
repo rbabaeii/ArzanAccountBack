@@ -1,6 +1,11 @@
-import { Controller, Get, Post, Query, Param } from '@nestjs/common';
+import { Controller, Get, Post, Query, Param, UseGuards } from '@nestjs/common';
 import { SearchService } from './search.service';
 import { ApiResponse } from '../common/dto/api-response.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { Public } from '../common/decorators/public.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @Controller('search')
 export class SearchController {
@@ -8,16 +13,25 @@ export class SearchController {
 
   /**
    * Live ElasticSearch Instant Search Endpoint
+   * Restricted: Admin scope (orders & users PII) is only accessible to authenticated admins.
+   * Public or unauthenticated queries default strictly to 'public' scope.
    */
+  @UseGuards(JwtAuthGuard)
+  @Public()
   @Get('live')
   searchLive(
     @Query('q') query?: string,
     @Query('scope') scope?: 'public' | 'admin' | 'all',
     @Query('limit') limit?: string,
+    @CurrentUser() user?: any,
   ) {
+    const isAdmin = user && ['SUPER_ADMIN', 'SUPPORT_ADMIN', 'ADMIN'].includes(user.role);
+    const effectiveScope: 'public' | 'admin' | 'all' =
+      isAdmin && (scope === 'admin' || scope === 'all') ? scope : 'public';
+
     const result = this.searchService.search({
       query: query || '',
-      scope: scope || 'public',
+      scope: effectiveScope,
       limit: limit ? Number(limit) : 10,
     });
     return ApiResponse.success(result);
@@ -52,7 +66,10 @@ export class SearchController {
 
   /**
    * Trigger Manual Reindex of Search Index
+   * Guarded against DoS: Only SUPER_ADMIN is authorized to rebuild indexes.
    */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN')
   @Post('reindex')
   async triggerReindex() {
     await this.searchService.reindexAll();

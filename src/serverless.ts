@@ -51,21 +51,32 @@ async function bootstrap(): Promise<express.Express> {
     }),
   );
 
-  // Flexible CORS for Vercel deployments and local development
+  const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
+    process.env.FRONTEND_URL,
+    process.env.SITE_PUBLIC_URL,
+  ].filter(Boolean) as string[];
+
+  // Secure CORS whitelist for Serverless deployment
   app.enableCors({
     origin: (origin, callback) => {
       // Allow requests with no origin (like mobile apps, curl, server-to-server)
       if (!origin) return callback(null, true);
-      // Allow localhost, vercel.app preview domains, and configured FRONTEND_URL
-      if (
-        origin.includes('localhost') ||
-        origin.includes('127.0.0.1') ||
-        origin.endsWith('.vercel.app') ||
-        origin === process.env.FRONTEND_URL
-      ) {
+
+      // Check explicit allowed origins list
+      if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
-      return callback(null, true); // Permissive in preview/test mode
+
+      // Allow verified Vercel preview deployments (*.vercel.app)
+      if (/^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/.test(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error('CORS request blocked by security policy.'), false);
     },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,

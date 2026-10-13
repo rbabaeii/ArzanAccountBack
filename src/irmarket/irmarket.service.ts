@@ -17,10 +17,7 @@ export class IrMarketService {
 
   constructor(private readonly configService: ConfigService) {
     this.baseUrl = this.configService.get<string>('IRMARKET_BASE_URL', 'https://api.irmarket.store');
-    this.apiKey = this.configService.get<string>(
-      'IRMARKET_API_KEY',
-      'anb_6ae2d846ec8ce52a816c108aa676b9ce70ce69b8',
-    );
+    this.apiKey = this.configService.get<string>('IRMARKET_API_KEY') || process.env.IRMARKET_API_KEY || '';
     this.isMockPurchase = this.configService.get<string>('MOCK_PURCHASE', 'true') === 'true';
 
     this.logger.log(`IrMarketService initialized. Mock Purchase Guard: ${this.isMockPurchase ? 'ACTIVE 🔒' : 'INACTIVE ⚠️'}`);

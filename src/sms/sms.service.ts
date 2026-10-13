@@ -411,8 +411,8 @@ export class SmsService {
     status?: string;
     template?: string;
   }) {
-    const limit = Number(query.limit) || 20;
-    const offset = Number(query.offset) || 0;
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+    const offset = Math.max(0, Number(query.offset) || 0);
 
     const where: any = {};
     if (query.status && query.status !== 'all') {

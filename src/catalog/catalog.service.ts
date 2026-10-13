@@ -24,15 +24,18 @@ export class CatalogService {
     @Optional() private readonly searchService?: SearchService,
   ) {}
 
-  async getProducts(params?: {
-    isActive?: boolean;
-    categoryId?: string;
-    search?: string;
-    isFlashDeal?: boolean;
-    isFeatured?: boolean;
-    limit?: number;
-    offset?: number;
-  }) {
+  async getProducts(
+    params?: {
+      isActive?: boolean;
+      categoryId?: string;
+      search?: string;
+      isFlashDeal?: boolean;
+      isFeatured?: boolean;
+      limit?: number;
+      offset?: number;
+    },
+    isAdmin = false,
+  ) {
     const where: any = {};
 
     if (params?.isActive !== undefined) {
@@ -59,15 +62,27 @@ export class CatalogService {
       ];
     }
 
+    const requestedLimit = Number(params?.limit);
+    const maxLimit = 10000;
+    const safeLimit = requestedLimit && requestedLimit > 0
+      ? Math.min(maxLimit, Math.max(1, requestedLimit))
+      : (isAdmin ? 5000 : 100);
+    const safeOffset = Math.max(0, Number(params?.offset) || 0);
+
     const [products, totalCount] = await Promise.all([
       this.prisma.product.findMany({
         where,
         include: { category: true },
         orderBy: [{ isFeatured: 'desc' }, { rating: 'desc' }, { createdAt: 'desc' }],
-        take: params?.limit ? Number(params.limit) : 50,
-        skip: params?.offset ? Number(params.offset) : 0,
+        take: safeLimit,
+        skip: safeOffset,
       }),
       this.prisma.product.count({ where }),
+    ]);
+
+    const [usdRate, defaultMargin] = await Promise.all([
+      this.pricingService.getUsdToRialRate(),
+      this.pricingService.getDefaultMargin(),
     ]);
 
     // Attach calculated prices
@@ -78,6 +93,8 @@ export class CatalogService {
           p.retailPriceUsd,
           p.customMarginPercent,
           p.pricingUnit,
+          usdRate,
+          defaultMargin,
         );
         let tags: string[] = [];
         if (p.tags) {
@@ -88,11 +105,30 @@ export class CatalogService {
           }
         }
 
-        return {
+        let item: any = {
           ...p,
           tags,
           calculatedPrice: price,
         };
+
+        if (!isAdmin) {
+          delete item.rawDetails;
+          item.costPriceUsd = null;
+          item.retailPriceUsd = null;
+          item.customMarginPercent = null;
+          item.priceToman = price.finalToman;
+
+          item.calculatedPrice = {
+            finalRial: price.finalRial,
+            finalToman: price.finalToman,
+            formattedToman: price.formattedToman,
+            discountPercent: price.discountPercent,
+            isPerThousand: price.isPerThousand,
+            isCustomMarginActive: price.isCustomMarginActive,
+          };
+        }
+
+        return item;
       }),
     );
 
@@ -102,7 +138,7 @@ export class CatalogService {
     };
   }
 
-  async getProductById(id: string) {
+  async getProductById(id: string, isAdmin = false) {
     const product = await this.prisma.product.findFirst({
       where: {
         OR: [{ id }, { externalId: isNaN(Number(id)) ? -1 : Number(id) }],
@@ -130,11 +166,30 @@ export class CatalogService {
       }
     }
 
-    return {
+    let item: any = {
       ...product,
       tags,
       calculatedPrice: price,
     };
+
+    if (!isAdmin) {
+      delete item.rawDetails;
+      item.costPriceUsd = null;
+      item.retailPriceUsd = null;
+      item.customMarginPercent = null;
+      item.priceToman = price.finalToman;
+
+      item.calculatedPrice = {
+        finalRial: price.finalRial,
+        finalToman: price.finalToman,
+        formattedToman: price.formattedToman,
+        discountPercent: price.discountPercent,
+        isPerThousand: price.isPerThousand,
+        isCustomMarginActive: price.isCustomMarginActive,
+      };
+    }
+
+    return item;
   }
 
   /**
@@ -756,6 +811,15 @@ export class CatalogService {
   }
 
   async deleteCategory(id: string) {
+    const category = await this.prisma.category.findUnique({ where: { id } });
+    if (!category) throw new NotFoundException('دسته‌بندی یافت نشد.');
+
+    // Unlink any products assigned to this category before deletion to avoid foreign key violations
+    await this.prisma.product.updateMany({
+      where: { categoryId: id },
+      data: { categoryId: null },
+    });
+
     return this.prisma.category.delete({
       where: { id },
     });

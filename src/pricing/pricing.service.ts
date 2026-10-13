@@ -44,11 +44,11 @@ export class PricingService {
     retailPriceUsd?: number | null,
     customMarginPercent?: number | null,
     pricingUnit = 'unit',
+    prefetchedUsdRate?: number,
+    prefetchedMargin?: number,
   ): Promise<CalculatedPrice> {
-    const [usdRate, defaultMargin] = await Promise.all([
-      this.getUsdToRialRate(),
-      this.getDefaultMargin(),
-    ]);
+    const usdRate = prefetchedUsdRate !== undefined ? prefetchedUsdRate : await this.getUsdToRialRate();
+    const defaultMargin = prefetchedMargin !== undefined ? prefetchedMargin : await this.getDefaultMargin();
 
     const effectiveRetailUsd = retailPriceUsd && retailPriceUsd > 0 ? retailPriceUsd : costPriceUsd;
     const usdToTomanRate = Math.round(usdRate / 10);

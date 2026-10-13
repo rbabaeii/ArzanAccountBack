@@ -91,6 +91,7 @@ model Order {
   activationItemsCount Int?      @default(0)
   couponCode           String?
   discountAppliedToman Int?      @default(0)
+  referralCashbackAwarded Boolean? @default(false)
   refundReason         String?
   refundCardNumber     String?
   refundIban           String?
@@ -157,6 +158,7 @@ model User {
   bankCardsJson      String?   // JSON array of user bank cards
   addressesJson      String?   // JSON array of user addresses
   isTwoFactorEnabled Boolean   @default(false)
+  hasPendingWithdrawal Boolean? @default(false)
   avatar             String?
   lastLoginAt        DateTime?
   createdAt          DateTime  @default(now())

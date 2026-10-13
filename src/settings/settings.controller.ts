@@ -20,6 +20,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Public } from '../common/decorators/public.decorator';
 
 @Controller('settings')
 export class SettingsController {
@@ -28,10 +29,19 @@ export class SettingsController {
     private readonly currencySyncService: CurrencySyncService,
   ) {}
 
+  @UseGuards(JwtAuthGuard)
+  @Public()
   @Get()
-  async getSettings() {
-    const data = await this.settingsService.getAllSettings();
-    return ApiResponse.success(data);
+  async getSettings(@CurrentUser() user?: any) {
+    const isAdmin = Boolean(
+      user && ['SUPER_ADMIN', 'FINANCE_ADMIN', 'CATALOG_MANAGER', 'SUPPORT_ADMIN', 'ADMIN'].includes(user.role),
+    );
+    if (isAdmin) {
+      const data = await this.settingsService.getAllSettings();
+      return ApiResponse.success(data);
+    }
+    const publicData = await this.settingsService.getPublicSettings();
+    return ApiResponse.success(publicData);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -174,7 +184,7 @@ export class SettingsController {
   @Roles('SUPER_ADMIN', 'FINANCE_ADMIN')
   @Get('currency/sync-status')
   async getCurrencySyncStatus() {
-    const config = await this.currencySyncService.getCurrencySyncConfig();
+    const config = await this.currencySyncService.getCurrencySyncStatus();
     return ApiResponse.success(config);
   }
 

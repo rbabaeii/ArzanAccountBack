@@ -7,6 +7,8 @@ import {
   Min,
   IsBoolean,
   ValidateNested,
+  ArrayMinSize,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -88,6 +90,8 @@ export class CreateOrderDto {
   totalPriceUsd: number;
 
   @IsArray()
+  @ArrayMinSize(1, { message: 'سبد خرید نمی‌تواند خالی باشد.' })
+  @ArrayMaxSize(50, { message: 'حداکثر ۵۰ قلم کالا در هر سفارش مجاز است.' })
   @ValidateNested({ each: true })
   @Type(() => OrderItemDto)
   items: OrderItemDto[];

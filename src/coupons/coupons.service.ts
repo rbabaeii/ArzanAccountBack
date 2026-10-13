@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { CreateCouponDto, UpdateCouponDto } from './coupons.dto';
 
 function toEnglishDigits(str: string): string {
   return str
@@ -90,6 +91,85 @@ function isCouponExpired(expiresAt?: string | null): boolean {
 @Injectable()
 export class CouponsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async getAllCoupons() {
+    return this.prisma.coupon.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getCouponById(id: string) {
+    const coupon = await this.prisma.coupon.findUnique({
+      where: { id },
+    });
+    if (!coupon) {
+      throw new NotFoundException('کد تخفیف مورد نظر یافت نشد.');
+    }
+    return coupon;
+  }
+
+  async createCoupon(dto: CreateCouponDto) {
+    const code = dto.code.trim().toUpperCase();
+    const existing = await this.prisma.coupon.findUnique({
+      where: { code },
+    });
+    if (existing) {
+      throw new BadRequestException('کد تخفیف با این عنوان قبلاً ثبت شده است.');
+    }
+
+    let allowedUserIdsStr: string | null = null;
+    if (dto.allowedUserIds !== undefined && dto.allowedUserIds !== null) {
+      allowedUserIdsStr =
+        typeof dto.allowedUserIds === 'string'
+          ? dto.allowedUserIds
+          : JSON.stringify(dto.allowedUserIds);
+    }
+
+    return this.prisma.coupon.create({
+      data: {
+        code,
+        discountPercent: dto.discountPercent,
+        maxDiscountToman: dto.maxDiscountToman ?? null,
+        minOrderToman: dto.minOrderToman ?? null,
+        expiresAt: dto.expiresAt ?? null,
+        maxUsage: dto.maxUsage ?? null,
+        isActive: dto.isActive !== undefined ? dto.isActive : true,
+        allowedUserIds: allowedUserIdsStr,
+      },
+    });
+  }
+
+  async updateCoupon(id: string, dto: UpdateCouponDto) {
+    await this.getCouponById(id);
+
+    const updateData: any = {};
+    if (dto.discountPercent !== undefined) updateData.discountPercent = dto.discountPercent;
+    if (dto.maxDiscountToman !== undefined) updateData.maxDiscountToman = dto.maxDiscountToman;
+    if (dto.minOrderToman !== undefined) updateData.minOrderToman = dto.minOrderToman;
+    if (dto.expiresAt !== undefined) updateData.expiresAt = dto.expiresAt;
+    if (dto.maxUsage !== undefined) updateData.maxUsage = dto.maxUsage;
+    if (dto.isActive !== undefined) updateData.isActive = dto.isActive;
+    if (dto.allowedUserIds !== undefined) {
+      updateData.allowedUserIds =
+        dto.allowedUserIds === null
+          ? null
+          : typeof dto.allowedUserIds === 'string'
+          ? dto.allowedUserIds
+          : JSON.stringify(dto.allowedUserIds);
+    }
+
+    return this.prisma.coupon.update({
+      where: { id },
+      data: updateData,
+    });
+  }
+
+  async deleteCoupon(id: string) {
+    await this.getCouponById(id);
+    return this.prisma.coupon.delete({
+      where: { id },
+    });
+  }
 
   async validateCoupon(code: string, authenticatedUserId?: string, userPhone?: string) {
     if (!code) {
@@ -187,7 +267,14 @@ export class CouponsService {
 
     return {
       success: true,
-      coupon,
+      coupon: {
+        id: coupon.id,
+        code: coupon.code,
+        discountPercent: coupon.discountPercent,
+        maxDiscountToman: coupon.maxDiscountToman,
+        minOrderToman: coupon.minOrderToman,
+        expiresAt: coupon.expiresAt,
+      },
     };
   }
 }

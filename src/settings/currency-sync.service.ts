@@ -82,7 +82,7 @@ export class CurrencySyncService implements OnApplicationBootstrap {
     this.isSyncing = true;
     try {
       const config = await this.getCurrencySyncConfig();
-      const apiKey = config.apiKey || 'BNrVb9bLT9dLPpgY4UDvX8bqJTvEaqKw';
+      const apiKey = config.apiKey || process.env.CURRENCY_API_KEY || '';
       const url = `https://Api.BrsApi.ir/Market/Gold_Currency.php?key=${encodeURIComponent(apiKey)}`;
 
       this.logger.log(`Fetching live USD exchange rate from BrsApi...`);
@@ -209,7 +209,7 @@ export class CurrencySyncService implements OnApplicationBootstrap {
       map[s.key] = s.value;
     });
 
-    const apiKey = map['CURRENCY_API_KEY'] || 'BNrVb9bLT9dLPpgY4UDvX8bqJTvEaqKw';
+    const apiKey = map['CURRENCY_API_KEY'] || process.env.CURRENCY_API_KEY || '';
     const intervalMinutes = parseInt(map['CURRENCY_SYNC_INTERVAL_MINUTES'] || '15', 10);
     const isAutoSyncEnabled = map['CURRENCY_AUTO_SYNC_ENABLED'] !== 'false';
     const lastSyncTime = map['LAST_CURRENCY_SYNC_TIME'] || 'هنوز استعلام نشده';
@@ -229,6 +229,17 @@ export class CurrencySyncService implements OnApplicationBootstrap {
       lastChangePercent,
       lastSyncTimestamp,
       usdToRialRate,
+    };
+  }
+
+  /**
+   * Get safe currency sync configuration for API responses (apiKey masked)
+   */
+  async getCurrencySyncStatus() {
+    const config = await this.getCurrencySyncConfig();
+    return {
+      ...config,
+      apiKey: config.apiKey ? '••••••••' + (config.apiKey.length > 4 ? config.apiKey.slice(-4) : '') : '',
     };
   }
 
@@ -264,7 +275,7 @@ export class CurrencySyncService implements OnApplicationBootstrap {
       );
     }
 
-    return this.getCurrencySyncConfig();
+    return this.getCurrencySyncStatus();
   }
 
   private formatSyncTime(date?: string, time?: string): string {

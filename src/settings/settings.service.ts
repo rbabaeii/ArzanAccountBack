@@ -19,7 +19,7 @@ export class SettingsService {
 
     const maxPurchaseRatioDenominator = parseInt(map['MAX_PURCHASE_RATIO_DENOMINATOR'] || '3', 10);
     const purchaseRatioExemptionThreshold = parseInt(map['PURCHASE_RATIO_EXEMPTION_THRESHOLD'] || '10', 10);
-    const currencyApiKey = map['CURRENCY_API_KEY'] || 'BNrVb9bLT9dLPpgY4UDvX8bqJTvEaqKw';
+    const currencyApiKey = map['CURRENCY_API_KEY'] || process.env.CURRENCY_API_KEY || '';
     const currencySyncIntervalMinutes = parseInt(map['CURRENCY_SYNC_INTERVAL_MINUTES'] || '15', 10);
     const enableCurrencyAutoSync = map['CURRENCY_AUTO_SYNC_ENABLED'] !== 'false';
     const lastCurrencySyncTime = map['LAST_CURRENCY_SYNC_TIME'] || 'هنوز استعلام نشده';
@@ -56,6 +56,34 @@ export class SettingsService {
     };
   }
 
+  async getPublicSettings() {
+    const settings = await this.prisma.systemSetting.findMany();
+    const map: Record<string, string> = {};
+    settings.forEach((s) => {
+      map[s.key] = s.value;
+    });
+
+    const usdToRialRate = parseInt(map['USD_TO_RIAL_RATE'] || '720000', 10);
+    const lastSyncTime = map['LAST_SYNC_TIME'] || 'هم‌اکنون';
+
+    return {
+      usdToRialRate,
+      usdToTomanRate: Math.round(usdToRialRate / 10),
+      lastSyncTime,
+      siteName: map['SITE_NAME'] || 'ارزان اکانت (arzanAccount)',
+      siteTagline: map['SITE_TAGLINE'] || 'مرجع تخصصی خرید انواع اکانت و اشتراک‌های بین‌المللی با تحویل فوری',
+      siteDescription: map['SITE_DESCRIPTION'] || 'خرید اشتراک پریمیوم اسپاتیفای، چت جی پی تی، نتفلیکس، اپل موزیک و سرویس‌های هوش مصنوعی با کمترین قیمت و ضمانت رسمی.',
+      siteLogo: map['SITE_LOGO_URL'] || '',
+      siteLogoDark: map['SITE_LOGO_DARK_URL'] || '',
+      siteFavicon: map['SITE_FAVICON_URL'] || '',
+      sitePhone: map['SITE_PHONE'] || '۰۲۱-۸۸۸۸۴۳۲۱',
+      siteEmail: map['SITE_EMAIL'] || 'support@arzanaccount.com',
+      supportTelegram: map['SUPPORT_TELEGRAM'] || '@arzan_support',
+      siteInstagram: map['SITE_INSTAGRAM'] || 'arzanaccount_official',
+      siteEnamad: map['SITE_ENAMAD_CODE'] || '',
+    };
+  }
+
   async updateSetting(key: string, value: string, user = 'مدیر سیستم') {
     const prev = await this.prisma.systemSetting.findUnique({ where: { key } });
 
@@ -82,9 +110,10 @@ export class SettingsService {
   }
 
   async getAuditLogs(limit = 50) {
+    const safeLimit = Math.min(100, Math.max(1, Number(limit) || 50));
     return this.prisma.auditLog.findMany({
       orderBy: { createdAt: 'desc' },
-      take: limit,
+      take: safeLimit,
     });
   }
 }

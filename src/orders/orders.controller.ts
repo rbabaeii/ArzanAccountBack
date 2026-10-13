@@ -22,6 +22,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Throttle } from '@nestjs/throttler';
 
 @Controller('orders')
 export class OrdersController {
@@ -98,12 +99,13 @@ export class OrdersController {
     return ApiResponse.success(data);
   }
 
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @UseGuards(JwtAuthGuard)
   @Post()
   async createOrder(@Body() dto: CreateOrderDto, @CurrentUser() user: any) {
     if (user && user.role === 'USER') {
       if (user.email) dto.customerEmail = user.email;
-      if (user.phone && !dto.customerPhone) dto.customerPhone = user.phone;
+      if (user.phone) dto.customerPhone = user.phone;
     }
     const order = await this.ordersService.createOrder(dto, user);
     return ApiResponse.success(order, 'سفارش با موفقیت ثبت شد.');
@@ -115,9 +117,9 @@ export class OrdersController {
   async updateStatus(
     @Param('id') id: string,
     @Body() dto: UpdateOrderStatusDto,
-    @CurrentUser('phone') adminPhone?: string,
+    @CurrentUser() adminUser?: any,
   ) {
-    const updated = await this.ordersService.updateStatus(id, dto, adminPhone || 'مدیر سیستم');
+    const updated = await this.ordersService.updateStatus(id, dto, adminUser);
     return ApiResponse.success(updated, 'وضعیت سفارش با موفقیت تغییر یافت.');
   }
 
@@ -135,16 +137,16 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('SUPER_ADMIN', 'FINANCE_ADMIN')
   @Post('process-refund')
-  async processRefund(@Body() dto: ProcessRefundDto) {
-    const updated = await this.ordersService.processRefund(dto);
+  async processRefund(@Body() dto: ProcessRefundDto, @CurrentUser() admin: any) {
+    const updated = await this.ordersService.processRefund(dto, admin);
     return ApiResponse.success(updated, 'تسویه عودت وجه با موفقیت انجام شد و رسید به ایمیل مشتری ارسال گردید.');
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('SUPER_ADMIN', 'FINANCE_ADMIN', 'SUPPORT_ADMIN', 'ADMIN')
   @Post(':id/reject-refund')
-  async rejectRefund(@Param('id') id: string, @Body() dto: RejectRefundDto) {
-    const updated = await this.ordersService.rejectRefund(id, dto);
+  async rejectRefund(@Param('id') id: string, @Body() dto: RejectRefundDto, @CurrentUser() admin: any) {
+    const updated = await this.ordersService.rejectRefund(id, dto, admin);
     return ApiResponse.success(updated, 'مخالفت با درخواست عودت وجه ثبت شد و وضعیت سفارش بازگردانده شد.');
   }
 }

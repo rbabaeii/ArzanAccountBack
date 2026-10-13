@@ -34,12 +34,15 @@ export class OrdersService {
       where.customerPhone = params.customerPhone;
     }
 
+    const safeLimit = Math.min(100, Math.max(1, Number(params?.limit) || 50));
+    const safeOffset = Math.max(0, Number(params?.offset) || 0);
+
     const [orders, totalCount] = await Promise.all([
       this.prisma.order.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        take: params?.limit ? Number(params.limit) : 50,
-        skip: params?.offset ? Number(params.offset) : 0,
+        take: safeLimit,
+        skip: safeOffset,
       }),
       this.prisma.order.count({ where }),
     ]);
@@ -135,7 +138,7 @@ export class OrdersService {
         const couponRes = await this.couponsService.validateCoupon(
           dto.couponCode,
           authenticatedUser?.id,
-          authenticatedUser?.phone || dto.customerPhone,
+          authenticatedUser?.phone || (authenticatedUser ? dto.customerPhone : undefined),
         );
         const coupon = couponRes.coupon;
         if (coupon.minOrderToman && calculatedSubtotalToman < coupon.minOrderToman) {
@@ -354,7 +357,7 @@ export class OrdersService {
     };
   }
 
-  async updateStatus(id: string, dto: UpdateOrderStatusDto, adminUser?: string) {
+  async updateStatus(id: string, dto: UpdateOrderStatusDto, adminUser?: any) {
     const order = await this.prisma.order.findFirst({
       where: { OR: [{ id }, { orderNumber: id }] },
     });
@@ -364,6 +367,12 @@ export class OrdersService {
     const previousStatus = order.status;
     const isNowCompleted = (dto.status === 'completed' || dto.status === 'delivered') &&
       previousStatus !== 'completed' && previousStatus !== 'delivered';
+
+    const effectiveAdminId = adminUser ? (adminUser.id || adminUser.sub || null) : (dto.adminId || null);
+    const effectiveAdminName = adminUser
+      ? (adminUser.name || adminUser.phone || adminUser.email || (typeof adminUser === 'string' ? adminUser : 'مدیر سیستم'))
+      : (dto.adminName || 'مدیر سیستم');
+    const effectiveAdminPhone = adminUser?.phone || dto.adminPhone || null;
 
     const updated = await this.prisma.order.update({
       where: { id: order.id },
@@ -376,9 +385,9 @@ export class OrdersService {
                 : String(dto.deliveredAccounts),
             }
           : {}),
-        approvedByAdminId: dto.adminId || null,
-        approvedByAdminName: dto.adminName || 'مدیر سیستم',
-        approvedByAdminPhone: dto.adminPhone || null,
+        approvedByAdminId: effectiveAdminId,
+        approvedByAdminName: effectiveAdminName,
+        approvedByAdminPhone: effectiveAdminPhone,
         approvedAt: isNowCompleted ? new Date() : order.approvedAt,
       },
     });
@@ -512,6 +521,9 @@ export class OrdersService {
     if (order.status === 'refund_requested') {
       throw new BadRequestException('درخواست عودت وجه برای این سفارش قبلاً ثبت شده و در حال بررسی است.');
     }
+    if (order.status !== 'completed' && order.status !== 'delivered') {
+      throw new BadRequestException('تنها سفارشات نهایی‌شده و پرداخت‌شده امکان درخواست عودت وجه دارند.');
+    }
 
     // Card hijacking protection: Verify card belongs to user if they have saved bank cards
     if (dto.refundCardNumber && requestingUser?.id) {
@@ -582,7 +594,7 @@ export class OrdersService {
     }));
   }
 
-  async processRefund(dto: ProcessRefundDto) {
+  async processRefund(dto: ProcessRefundDto, adminUser?: any) {
     const order = await this.prisma.order.findFirst({
       where: { OR: [{ id: dto.orderId }, { orderNumber: dto.orderId }] },
     });
@@ -593,68 +605,100 @@ export class OrdersService {
       throw new BadRequestException('این سفارش پیش‌تر تسویه و عودت داده شده است.');
     }
 
+    if (order.status !== 'refund_requested' && order.status !== 'completed' && order.status !== 'delivered') {
+      throw new BadRequestException('تنها سفارشاتی که در وضعیت پرداخت‌شده یا درخواست عودت وجه هستند امکان تسویه دارند.');
+    }
+
     if (dto.refundAmountToman > order.totalPriceToman || dto.refundAmountToman <= 0) {
       throw new BadRequestException('مبلغ عودت وجه نامعتبر بوده یا از مبلغ کل سفارش بیشتر است.');
     }
+
+    // Verify legitimate payment exists for this order (CRIT-02)
+    if (this.prisma.cardPayment) {
+      const paymentRecord = await this.prisma.cardPayment.findFirst({
+        where: {
+          OR: [{ orderNumber: order.orderNumber }, { id: order.id }, { orderId: order.id }],
+          status: { in: ['PAID', 'APPROVED'] },
+        },
+      });
+      if (!paymentRecord && !order.approvedAt && order.paymentGateway === 'cartbecart' && order.status === 'refund_requested') {
+        throw new BadRequestException('هیچ تراکنش مالی تاییدشده‌ای برای این سفارش ثبت نگردیده است و امکان عودت وجه وجود ندارد.');
+      }
+    }
+
+    // Authenticated admin extraction to prevent identity spoofing (MED-04)
+    const effectiveAdminId = adminUser ? (adminUser.id || adminUser.sub || null) : (dto.adminId || null);
+    const effectiveAdminName = adminUser
+      ? (adminUser.name || adminUser.phone || adminUser.email || 'مدیر مالی')
+      : (dto.adminName || 'مدیر مالی');
 
     const isWalletRefund = dto.refundMethod === 'wallet';
     const trackingCode = isWalletRefund
       ? (dto.refundTrackingCode || `WALLET-REFUND-${Date.now().toString().slice(-6)}`)
       : (dto.refundTrackingCode || `BANK-${Date.now().toString().slice(-6)}`);
 
-    // If wallet refund, credit the customer's wallet balance directly in the database
-    if (isWalletRefund) {
-      const userConditions: any[] = [];
-      if (order.customerPhone) userConditions.push({ phone: order.customerPhone });
-      if (order.customerEmail) userConditions.push({ email: order.customerEmail });
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // 1. Atomic status transition: Only update if status is currently in an approved/refundable state
+      const updateResult = await tx.order.updateMany({
+        where: {
+          id: order.id,
+          status: { in: ['refund_requested', 'completed', 'delivered'] },
+        },
+        data: {
+          status: 'refunded',
+          refundAmountToman: dto.refundAmountToman,
+          refundTrackingCode: trackingCode,
+          refundMethod: isWalletRefund ? 'wallet' : 'bank_card',
+          refundReceiptUrl: dto.refundReceiptUrl || null,
+          refundCardNumber: isWalletRefund ? 'کیف پول درون سایت' : (dto.refundCardNumber || order.refundCardNumber),
+          refundIban: isWalletRefund ? null : (dto.refundIban || order.refundIban),
+          refundedAt: new Date(),
+          refundedByAdminId: effectiveAdminId,
+          refundedByAdminName: effectiveAdminName,
+        },
+      });
 
-      if (userConditions.length > 0) {
-        const customer = await this.prisma.user.findFirst({
-          where: { OR: userConditions },
-        });
+      if (updateResult.count === 0) {
+        throw new BadRequestException('این سفارش پیش‌تر تسویه و عودت داده شده یا وضعیت آن تغییر یافته است.');
+      }
 
-        if (customer) {
-          const currentDirect = customer.directDepositBalance || 0;
-          const currentBonus = customer.cashbackBonusBalance || 0;
-          const newDirect = currentDirect + dto.refundAmountToman;
-          const newTotalWallet = newDirect + currentBonus;
+      // 2. If wallet refund, credit the customer's wallet balance atomically
+      if (isWalletRefund) {
+        const userConditions: any[] = [];
+        if (order.customerPhone) userConditions.push({ phone: order.customerPhone });
+        if (order.customerEmail) userConditions.push({ email: order.customerEmail });
 
-          await this.prisma.user.update({
-            where: { id: customer.id },
-            data: {
-              directDepositBalance: newDirect,
-              walletBalanceToman: newTotalWallet,
-            },
+        if (userConditions.length > 0) {
+          const customer = await tx.user.findFirst({
+            where: { OR: userConditions },
           });
 
-          await this.prisma.auditLog.create({
-            data: {
-              action: `شارژ کیف پول خریدار بابت عودت وجه سفارش #${order.orderNumber}`,
-              details: `مبلغ ${new Intl.NumberFormat('fa-IR').format(dto.refundAmountToman)} تومان بابت عودت وجه سفارش #${order.orderNumber} مستقیماً به کیف پول کاربر ${customer.name} (${customer.phone || customer.email}) واریز گردید. موجودی جدید: ${newTotalWallet} تومان.`,
-              user: dto.adminName || 'مدیر مالی',
-              type: 'finance',
-            },
-          });
+          if (customer) {
+            await tx.user.update({
+              where: { id: customer.id },
+              data: {
+                directDepositBalance: { increment: dto.refundAmountToman },
+                walletBalanceToman: { increment: dto.refundAmountToman },
+              },
+            });
 
-          this.logger.log(`[WALLET REFUND] Credited ${dto.refundAmountToman} Toman to user ${customer.name} for order #${order.orderNumber}`);
+            await tx.auditLog.create({
+              data: {
+                action: `شارژ کیف پول خریدار بابت عودت وجه سفارش #${order.orderNumber}`,
+                details: `مبلغ ${new Intl.NumberFormat('fa-IR').format(dto.refundAmountToman)} تومان بابت عودت وجه سفارش #${order.orderNumber} مستقیماً به کیف پول کاربر ${customer.name} (${customer.phone || customer.email}) واریز گردید.`,
+                user: effectiveAdminName,
+                adminId: effectiveAdminId,
+                adminName: effectiveAdminName,
+                type: 'finance',
+              },
+            });
+
+            this.logger.log(`[WALLET REFUND] Credited ${dto.refundAmountToman} Toman to user ${customer.name} for order #${order.orderNumber} by admin ${effectiveAdminName}`);
+          }
         }
       }
-    }
 
-    const updated = await this.prisma.order.update({
-      where: { id: order.id },
-      data: {
-        status: 'refunded',
-        refundAmountToman: dto.refundAmountToman,
-        refundTrackingCode: trackingCode,
-        refundMethod: isWalletRefund ? 'wallet' : 'bank_card',
-        refundReceiptUrl: dto.refundReceiptUrl || null,
-        refundCardNumber: isWalletRefund ? 'کیف پول درون سایت' : (dto.refundCardNumber || order.refundCardNumber),
-        refundIban: isWalletRefund ? null : (dto.refundIban || order.refundIban),
-        refundedAt: new Date(),
-        refundedByAdminId: dto.adminId || null,
-        refundedByAdminName: dto.adminName || 'مدیر مالی',
-      },
+      return tx.order.findUnique({ where: { id: order.id } });
     });
 
     // Reverse cashback if not already done
@@ -717,9 +761,10 @@ export class OrdersService {
     await this.prisma.auditLog.create({
       data: {
         action: `تسویه و عودت وجه سفارش #${order.orderNumber} (${isWalletRefund ? 'به کیف پول سایت' : 'به حساب بانکی'})`,
-        details: `مبلغ ${dto.refundAmountToman} تومان ${isWalletRefund ? 'به کیف پول سایت کاربر' : `با کد رهگیری ${trackingCode} به حساب بانکی`} توسط ${dto.adminName || 'مدیر مالی'} عودت داده شد.`,
-        adminId: dto.adminId || null,
-        adminName: dto.adminName || 'مدیر مالی',
+        details: `مبلغ ${dto.refundAmountToman} تومان ${isWalletRefund ? 'به کیف پول سایت کاربر' : `با کد رهگیری ${trackingCode} به حساب بانکی`} توسط ${effectiveAdminName} عودت داده شد.`,
+        user: effectiveAdminName,
+        adminId: effectiveAdminId,
+        adminName: effectiveAdminName,
         type: 'orders_approval',
       },
     });
@@ -730,7 +775,7 @@ export class OrdersService {
   /**
    * Admin rejects customer's refund request and returns order to completed or original status.
    */
-  async rejectRefund(id: string, dto: RejectRefundDto) {
+  async rejectRefund(id: string, dto: RejectRefundDto, adminUser?: any) {
     const order = await this.prisma.order.findFirst({
       where: { OR: [{ id }, { orderNumber: id }, { id: id.replace('ord-', '') }] },
     });
@@ -738,6 +783,12 @@ export class OrdersService {
     if (!order) throw new NotFoundException('سفارش مورد نظر یافت نشد.');
 
     const returnStatus = dto.newStatus || 'completed';
+
+    // Authenticated admin extraction to prevent identity spoofing (MED-04)
+    const effectiveAdminId = adminUser ? (adminUser.id || adminUser.sub || null) : (dto.adminId || null);
+    const effectiveAdminName = adminUser
+      ? (adminUser.name || adminUser.phone || adminUser.email || 'مدیر سیستم')
+      : (dto.adminName || 'مدیر سیستم');
 
     const updated = await this.prisma.order.update({
       where: { id: order.id },
@@ -771,9 +822,9 @@ export class OrdersService {
     await this.prisma.auditLog.create({
       data: {
         action: `مخالفت با درخواست عودت وجه سفارش #${order.orderNumber}`,
-        details: `درخواست عودت وجه سفارش #${order.orderNumber} توسط ${dto.adminName || 'مدیر سیستم'} رد شد. دلیل: "${dto.rejectionReason}". وضعیت سفارش به "${returnStatus}" بازگردانده شد.`,
-        adminId: dto.adminId || null,
-        adminName: dto.adminName || 'مدیر سیستم',
+        details: `درخواست عودت وجه سفارش #${order.orderNumber} توسط ${effectiveAdminName} رد شد. دلیل: "${dto.rejectionReason}". وضعیت سفارش به "${returnStatus}" بازگردانده شد.`,
+        adminId: effectiveAdminId,
+        adminName: effectiveAdminName,
         type: 'orders',
       },
     });
@@ -788,6 +839,26 @@ export class OrdersService {
     try {
       if (order.status !== 'completed' && order.status !== 'delivered') {
         return;
+      }
+
+      // Concurrency & Race Condition Guard (MED-02):
+      // Atomically mark referralCashbackAwarded = true on the order.
+      // If already true, count is 0, preventing duplicate concurrent awards.
+      if (this.prisma.order.updateMany) {
+        const claimResult = await this.prisma.order.updateMany({
+          where: {
+            id: order.id,
+            status: { in: ['completed', 'delivered'] },
+            referralCashbackAwarded: { not: true },
+          },
+          data: {
+            referralCashbackAwarded: true,
+          },
+        });
+
+        if (claimResult.count === 0) {
+          return;
+        }
       }
 
       // Guard against duplicate payout for the same order
@@ -833,16 +904,11 @@ export class OrdersService {
       if (cashbackPercent > 0 && order.totalPriceToman > 0) {
         const cashbackAmount = Math.round(Number(order.totalPriceToman) * (cashbackPercent / 100));
         if (cashbackAmount > 0) {
-          const prevBonus = inviter.cashbackBonusBalance || 0;
-          const prevDirect = inviter.directDepositBalance || 0;
-          const newBonus = prevBonus + cashbackAmount;
-          const newTotalWallet = prevDirect + newBonus;
-
           await this.prisma.user.update({
             where: { id: inviter.id },
             data: {
-              cashbackBonusBalance: newBonus,
-              walletBalanceToman: newTotalWallet,
+              cashbackBonusBalance: { increment: cashbackAmount },
+              walletBalanceToman: { increment: cashbackAmount },
             },
           });
 
@@ -870,23 +936,39 @@ export class OrdersService {
    */
   async reverseReferralCashbackIfApplicable(order: any) {
     try {
-      const awardLog = await this.prisma.auditLog.findFirst({
-        where: {
-          action: 'واریز پاداش دعوت از دوستان (کش‌بک زیرمجموعه)',
-          details: { contains: `#${order.orderNumber}` },
-        },
-      });
+      // Concurrency & Idempotency Guard (MED-02): Atomically claim reversal first
+      let reversalClaimed = false;
+      if (this.prisma.order.updateMany) {
+        const reversalClaim = await this.prisma.order.updateMany({
+          where: {
+            id: order.id,
+            referralCashbackAwarded: true,
+          },
+          data: {
+            referralCashbackAwarded: false,
+          },
+        });
+        reversalClaimed = reversalClaim.count > 0;
+      }
 
-      if (!awardLog) return; // Never awarded, nothing to reverse
+      if (!reversalClaimed) {
+        // Fallback for legacy orders: check audit log
+        const awardLog = await this.prisma.auditLog.findFirst({
+          where: {
+            action: 'واریز پاداش دعوت از دوستان (کش‌بک زیرمجموعه)',
+            details: { contains: `#${order.orderNumber}` },
+          },
+        });
+        if (!awardLog) return; // Never awarded, nothing to reverse
 
-      const alreadyReversed = await this.prisma.auditLog.findFirst({
-        where: {
-          action: 'کسر پاداش دعوت از دوستان (لغو/عودت سفارش)',
-          details: { contains: `#${order.orderNumber}` },
-        },
-      });
-
-      if (alreadyReversed) return;
+        const alreadyReversed = await this.prisma.auditLog.findFirst({
+          where: {
+            action: 'کسر پاداش دعوت از دوستان (لغو/عودت سفارش)',
+            details: { contains: `#${order.orderNumber}` },
+          },
+        });
+        if (alreadyReversed) return;
+      }
 
       const userConditions: any[] = [];
       if (order.customerPhone) userConditions.push({ phone: order.customerPhone });
@@ -917,29 +999,29 @@ export class OrdersService {
 
       if (cashbackAmount > 0) {
         const prevBonus = inviter.cashbackBonusBalance || 0;
-        const prevDirect = inviter.directDepositBalance || 0;
-        const newBonus = Math.max(0, prevBonus - cashbackAmount);
-        const newTotalWallet = Math.max(0, prevDirect + newBonus);
+        const actualDeduct = Math.min(prevBonus, cashbackAmount);
 
-        await this.prisma.user.update({
-          where: { id: inviter.id },
-          data: {
-            cashbackBonusBalance: newBonus,
-            walletBalanceToman: newTotalWallet,
-          },
-        });
+        if (actualDeduct > 0) {
+          await this.prisma.user.update({
+            where: { id: inviter.id },
+            data: {
+              cashbackBonusBalance: { decrement: actualDeduct },
+              walletBalanceToman: { decrement: actualDeduct },
+            },
+          });
+        }
 
         await this.prisma.auditLog.create({
           data: {
             action: 'کسر پاداش دعوت از دوستان (لغو/عودت سفارش)',
-            details: `مبلغ ${new Intl.NumberFormat('fa-IR').format(cashbackAmount)} تومان پاداش کش‌بک سفارش #${order.orderNumber} به دلیل لغو/عودت وجه سفارش از کیف پول معرف (${inviter.name}) کسر گردید.`,
+            details: `مبلغ ${new Intl.NumberFormat('fa-IR').format(actualDeduct)} تومان پاداش کش‌بک سفارش #${order.orderNumber} به دلیل لغو/عودت وجه سفارش از کیف پول معرف (${inviter.name}) کسر گردید.`,
             user: inviter.name,
             type: 'finance',
           },
         });
 
         this.logger.log(
-          `[REFERRAL CASHBACK REVERSED] Deducted ${cashbackAmount} Toman from inviter ${inviter.name} due to cancellation of order #${order.orderNumber}`
+          `[REFERRAL CASHBACK REVERSED] Deducted ${actualDeduct} Toman from inviter ${inviter.name} due to cancellation of order #${order.orderNumber}`
         );
       }
     } catch (err: any) {

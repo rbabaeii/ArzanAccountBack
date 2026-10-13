@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEmail, IsBoolean, IsIn, IsNumber, MinLength, MaxLength, Matches, ValidateIf } from 'class-validator';
+import { IsString, IsOptional, IsEmail, IsBoolean, IsIn, IsNumber, IsInt, Min, MinLength, MaxLength, Matches, ValidateIf } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { SanitizeText } from '../common/decorators/sanitize.decorator';
 import { IsIranianNationalCode } from '../common/decorators/is-national-code.decorator';
@@ -146,7 +146,8 @@ export class TopUpWalletDto {
 }
 
 export class ConvertPointsDto {
-  @IsNumber()
+  @IsInt({ message: 'تعداد امتیاز باید عدد صحیح باشد.' })
+  @Min(10, { message: 'حداقل امتیاز برای تبدیل ۱۰ امتیاز است.' })
   points: number;
 }
 

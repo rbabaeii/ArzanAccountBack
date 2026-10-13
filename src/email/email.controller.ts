@@ -8,6 +8,12 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { EmailService, SmtpConfig } from './email.service';
+import {
+  UpdateEmailSettingsDto,
+  SendTestEmailDto,
+  SendOrderReceiptDto,
+  SendCustomEmailDto,
+} from './email.dto';
 import { ApiResponse } from '../common/dto/api-response.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -28,21 +34,18 @@ export class EmailController {
 
   @Put('settings')
   async updateSettings(
-    @Body() body: { config: Partial<SmtpConfig>; user?: string },
+    @Body() body: UpdateEmailSettingsDto,
     @CurrentUser('name') userName?: string,
   ) {
     const updated = await this.emailService.updateSettings(
-      body.config,
+      body.config as Partial<SmtpConfig>,
       userName || body.user || 'مدیر ارشد',
     );
     return ApiResponse.success(updated, 'تنظیمات سرور ایمیل با موفقیت ذخیره و اعمال شد.');
   }
 
   @Post('test')
-  async sendTest(@Body() body: { to: string; template?: string }) {
-    if (!body.to) {
-      return ApiResponse.error('وارد کردن آدرس ایمیل گیرنده الزامی است.');
-    }
+  async sendTest(@Body() body: SendTestEmailDto) {
     const result = await this.emailService.sendTestEmail(body.to, body.template || 'test');
     if (!result.success) {
       return ApiResponse.error(result.error || 'ارسال ایمیل ناموفق بود.');
@@ -74,11 +77,14 @@ export class EmailController {
 
   @Roles('SUPER_ADMIN', 'FINANCE_ADMIN')
   @Post('send-order-receipt')
-  async sendOrderReceipt(@Body() body: any) {
-    if (!body.customerEmail || !body.orderNumber) {
-      return ApiResponse.error('اطلاعات سفارش ناقص است.');
-    }
-    const result = await this.emailService.sendOrderReceipt(body);
+  async sendOrderReceipt(@Body() body: SendOrderReceiptDto) {
+    const data = {
+      ...body,
+      createdAt: body.createdAt || new Date().toISOString(),
+      items: Array.isArray(body.items) ? body.items : [],
+      totalPriceToman: body.totalPriceToman || 0,
+    };
+    const result = await this.emailService.sendOrderReceipt(data as any);
     if (!result.success) {
       return ApiResponse.error(result.error || 'ارسال ایمیل سفارش ناموفق بود.');
     }
@@ -87,29 +93,9 @@ export class EmailController {
 
   @Post('send-custom')
   async sendCustomEmail(
-    @Body()
-    body: {
-      recipientEmail: string;
-      recipientName?: string;
-      subject: string;
-      message: string;
-      badge?: string;
-      buttonText?: string;
-      buttonUrl?: string;
-      adminSender?: string;
-    },
+    @Body() body: SendCustomEmailDto,
     @CurrentUser('name') userName?: string,
   ) {
-    if (!body.recipientEmail || !body.recipientEmail.includes('@')) {
-      return ApiResponse.error('آدرس ایمیل گیرنده نامعتبر است.');
-    }
-    if (!body.subject || !body.subject.trim()) {
-      return ApiResponse.error('موضوع ایمیل نمی‌تواند خالی باشد.');
-    }
-    if (!body.message || !body.message.trim()) {
-      return ApiResponse.error('متن ایمیل نمی‌تواند خالی باشد.');
-    }
-
     const result = await this.emailService.sendCustomUserEmail({
       ...body,
       adminSender: userName || body.adminSender || 'مدیر ارشد',

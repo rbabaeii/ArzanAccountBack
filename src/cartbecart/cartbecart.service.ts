@@ -26,6 +26,7 @@ import {
 } from './cartbecart.constants';
 
 import { SmsService } from '../sms/sms.service';
+import { toEnglishDigits } from '../common/utils/iranian-banks';
 
 @Injectable()
 export class CartBeCartService {
@@ -449,6 +450,22 @@ export class CartBeCartService {
           })
         : null;
 
+    // Validate uniqueness of trackingCode against PAID or APPROVED transactions (MED-01)
+    if (dto.trackingCode && dto.trackingCode.trim()) {
+      const rawTracking = dto.trackingCode.trim();
+      const cleanTracking = toEnglishDigits(rawTracking).trim();
+      const existingPaidOrApproved = await this.prisma.cardPayment.findFirst({
+        where: {
+          trackingCode: { in: [cleanTracking, rawTracking] },
+          status: { in: ['PAID', 'APPROVED'] },
+          ...(payment?.id ? { id: { not: payment.id } } : {}),
+        },
+      });
+      if (existingPaidOrApproved) {
+        throw new BadRequestException('این کد پیگیری پیش‌تر برای یک تراکنش موفق ثبت و تایید گردیده است و امکان استفاده مجدد ندارد.');
+      }
+    }
+
     if (!payment) {
       // Create new manual payment record
       const token = `MANUAL-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
@@ -462,7 +479,7 @@ export class CartBeCartService {
           amountToman: dto.amountToman,
           amountRial: dto.amountToman * 10,
           status: 'MANUAL_REVIEW',
-          trackingCode: dto.trackingCode,
+          trackingCode: dto.trackingCode ? toEnglishDigits(dto.trackingCode).trim() : null,
           userCardNumber: dto.userCardNumber || null,
           receiptUrl: dto.receiptUrl || null,
           depositTime: dto.depositTime || new Date().toISOString(),
@@ -665,6 +682,21 @@ export class CartBeCartService {
 
     if (payment.status === 'APPROVED' || payment.status === 'PAID') {
       throw new BadRequestException('این تراکنش قبلاً با موفقیت تأیید شده است.');
+    }
+
+    if (payment.trackingCode && payment.trackingCode.trim()) {
+      const rawTracking = payment.trackingCode.trim();
+      const cleanTracking = toEnglishDigits(rawTracking).trim();
+      const duplicatePaid = await this.prisma.cardPayment.findFirst({
+        where: {
+          trackingCode: { in: [cleanTracking, rawTracking] },
+          status: { in: ['APPROVED', 'PAID'] },
+          id: { not: payment.id },
+        },
+      });
+      if (duplicatePaid) {
+        throw new BadRequestException('کد پیگیری این تراکنش قبلاً برای یک تراکنش موفق دیگر تایید شده است.');
+      }
     }
 
     const updateResult = await this.prisma.cardPayment.updateMany({

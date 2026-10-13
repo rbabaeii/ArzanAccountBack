@@ -341,7 +341,6 @@ export class AuthService implements OnApplicationBootstrap {
     const isAccepted =
       (redisOtp && redisOtp === cleanCode) ||
       (record && record.code === cleanCode && record.expiresAt > Date.now()) ||
-      (record && record.code === cleanCode) ||
       (cleanCode === '11111' && (!process.env.NODE_ENV || process.env.NODE_ENV !== 'production'));
 
     if (!isAccepted) {

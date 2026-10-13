@@ -455,8 +455,17 @@ export class SearchService implements OnModuleInit {
       }
     }
 
+    const sanitizedTopProducts = topProducts.map((p) => {
+      if (scope === 'admin') return p;
+      const { costPriceUsd, retailPriceUsd, ...safeItem } = p.item;
+      return {
+        ...p,
+        item: safeItem as any,
+      };
+    });
+
     return {
-      products: topProducts,
+      products: sanitizedTopProducts,
       categories: scoredCategories.slice(0, 4),
       orders: scoredOrders.slice(0, 6),
       users: scoredUsers.slice(0, 6),
@@ -475,7 +484,10 @@ export class SearchService implements OnModuleInit {
     const matched = this.productsIndex.filter((p) =>
       p.tags.some((t) => this.normalizeText(t) === norm),
     );
-    return matched.slice(0, limit);
+    return matched.slice(0, limit).map((p) => {
+      const { costPriceUsd, retailPriceUsd, ...safeProduct } = p;
+      return safeProduct as any;
+    });
   }
 
   /**
@@ -512,6 +524,9 @@ export class SearchService implements OnModuleInit {
       .filter((s) => s.score > 0)
       .sort((a, b) => b.score - a.score);
 
-    return scored.slice(0, limit).map((s) => s.product);
+    return scored.slice(0, limit).map((s) => {
+      const { costPriceUsd, retailPriceUsd, ...safeProduct } = s.product;
+      return safeProduct as any;
+    });
   }
 }

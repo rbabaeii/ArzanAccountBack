@@ -117,9 +117,10 @@ export class UsersController {
   async processWithdrawal(
     @Param('id') id: string,
     @Body() dto: ProcessWithdrawalDto,
+    @CurrentUser() adminUser: any,
   ) {
     try {
-      const result = await this.usersService.processWithdrawal(id, dto);
+      const result = await this.usersService.processWithdrawal(id, dto, adminUser);
       return ApiResponse.success(
         result,
         dto.action === 'APPROVE' ? 'درخواست تسویه با موفقیت تایید شد.' : 'درخواست تسویه رد شد.',
@@ -195,7 +196,7 @@ export class UsersController {
     if (user.id !== id && user.role !== 'SUPER_ADMIN') {
       throw new ForbiddenException('شما فقط مجاز به ویرایش مشخصات پروفایل خود هستید.');
     }
-    const updated = await this.usersService.updateProfile(id, dto);
+    const updated = await this.usersService.updateProfile(id, dto, user);
     return ApiResponse.success(updated, 'اطلاعات پروفایل کاربری با موفقیت به‌روزرسانی شد.');
   }
 
@@ -244,9 +245,9 @@ export class UsersController {
   @Delete(':id')
   async deleteUser(
     @Param('id') id: string,
-    @CurrentUser('phone') adminPhone?: string,
+    @CurrentUser() adminUser: any,
   ) {
-    const result = await this.usersService.deleteUser(id, adminPhone || 'مدیر ارشد');
+    const result = await this.usersService.deleteUser(id, adminUser);
     return ApiResponse.success(result, 'کاربر حذف گردید.');
   }
 

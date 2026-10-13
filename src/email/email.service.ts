@@ -615,8 +615,8 @@ ${isApproved ? `کد رهگیری: ${data.bankTrackingCode || '-'}` : `علت: $
       this.prisma.emailLog.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        take: params?.limit ? Number(params.limit) : 30,
-        skip: params?.offset ? Number(params.offset) : 0,
+        take: Math.min(100, Math.max(1, Number(params?.limit) || 30)),
+        skip: Math.max(0, Number(params?.offset) || 0),
       }),
       this.prisma.emailLog.count({ where }),
     ]);
